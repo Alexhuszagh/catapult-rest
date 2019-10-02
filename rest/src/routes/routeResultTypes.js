@@ -35,5 +35,9 @@ module.exports = {
 
 	// diagnostic
 	serverInfo: 'serverInfo',
-	storageInfo: 'storageInfo'
+	storageInfo: 'storageInfo',
+
+	// Internal: for debugging only TODO(ahuszagh) Remove.
+	blockHeight: 'blockHeight',
+	transactionHash: 'transactionHash',
 };

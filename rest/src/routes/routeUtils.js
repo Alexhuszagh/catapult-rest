@@ -52,6 +52,15 @@ const namedParserMap = {
 
 		return result;
 	},
+	uint_or_latest: str => {
+		if (str === 'latest')
+			return Number.MAX_SAFE_INTEGER;
+		const result = convert.tryParseUint(str);
+		if (undefined === result)
+			throw Error('must be non-negative number');
+
+		return result;
+	},
 	address: str => {
 		if (constants.sizes.addressEncoded === str.length)
 			return address.stringToAddress(str);

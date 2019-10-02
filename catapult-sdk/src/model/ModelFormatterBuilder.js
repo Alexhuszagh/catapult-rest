@@ -45,7 +45,11 @@ class ModelFormatterBuilder {
 			'nodeTime',
 			'serverInfo',
 			'storageInfo',
-			'transactionStatus'
+			'transactionStatus',
+
+			// Internal: for debugging only TODO(ahuszagh) Remove.
+			'blockHeight',
+			'transactionHash',
 		]);
 	}
 

@@ -19,11 +19,13 @@
  */
 
 const dbFacade = require('./dbFacade');
+const dbUtils = require('../db/dbUtils');
 const routeResultTypes = require('./routeResultTypes');
 const routeUtils = require('./routeUtils');
 const errors = require('../server/errors');
 
 const parseHeight = params => routeUtils.parseArgument(params, 'height', 'uint');
+const parseHeightOrLatest = params => routeUtils.parseArgument(params, 'height', 'uint_or_latest');
 
 const getLimit = (validLimits, params) => {
 	const limit = routeUtils.parseArgument(params, 'limit', 'uint');
@@ -75,7 +77,76 @@ module.exports = {
 				return res.redirect(`/blocks/${sanitizedHeight}/limit/${sanitizedLimit}`, next); // redirect calls next
 
 			return db.blocksFrom(height, limit).then(blocks => {
+				console.log(`blocks=${blocks}`)
 				res.send({ payload: blocks, type: routeResultTypes.block });
+				next();
+			});
+		});
+
+		// Gets blocks up to the height (non-inclusive).
+		// `latest` may be provided for the latest `:limit` number of blocks.
+		server.get('/blocks/from/:height/limit/:limit', (req, res, next) => {
+			const height = parseHeightOrLatest(req.params);
+			const limit = getLimit(validPageSizes, req.params);
+
+			if (!limit) {
+				const sanitizedLimit = validPageSizes[0];
+				return res.redirect(`/blocks/from/${req.params.height}/limit/${sanitizedLimit}`, next);
+			}
+
+			return db.blocksFromHeight(height, limit).then(blocks => {
+				res.send({ payload: blocks, type: routeResultTypes.block });
+				next();
+			});
+		});
+
+		// Gets blocks starting from the height (non-inclusive).
+		// `0` may be provided for the first `:limit` number of blocks.
+		server.get('/blocks/since/:height/limit/:limit', (req, res, next) => {
+			const height = parseHeightOrLatest(req.params);
+			const limit = getLimit(validPageSizes, req.params);
+
+			if (!limit) {
+				const sanitizedLimit = validPageSizes[0];
+				return res.redirect(`/blocks/since/${req.params.height}/limit/${sanitizedLimit}`, next);
+			}
+
+			return db.blocksSinceHeight(height, limit).then(blocks => {
+				res.send({ payload: blocks, type: routeResultTypes.block });
+				next();
+			});
+		});
+
+		// TODO(ahuszagh) Debug method. Remove later.
+		server.get('/blocks/from/:height/limit/:limit/height', (req, res, next) => {
+			const height = parseHeightOrLatest(req.params);
+			const limit = getLimit(validPageSizes, req.params);
+
+			if (!limit) {
+				const sanitizedLimit = validPageSizes[0];
+				return res.redirect(`/blocks/from/${req.params.height}/limit/${sanitizedLimit}/heights`, next);
+			}
+
+			return db.blocksFromHeight(height, limit).then(blocks => {
+				const blockHeights = blocks.map(blockInfo => { return { height: blockInfo.block.height }; });
+				res.send({ payload: blockHeights, type: routeResultTypes.blockHeight });
+				next();
+			});
+		});
+
+		// TODO(ahuszagh) Debug method. Remove later.
+		server.get('/blocks/since/:height/limit/:limit/height', (req, res, next) => {
+			const height = parseHeightOrLatest(req.params);
+			const limit = getLimit(validPageSizes, req.params);
+
+			if (!limit) {
+				const sanitizedLimit = validPageSizes[0];
+				return res.redirect(`/blocks/since/${req.params.height}/limit/${sanitizedLimit}/heights`, next);
+			}
+
+			return db.blocksSinceHeight(height, limit).then(blocks => {
+				const blockHeights = blocks.map(blockInfo => { return { height: blockInfo.block.height }; });
+				res.send({ payload: blockHeights, type: routeResultTypes.blockHeight });
 				next();
 			});
 		});

@@ -168,7 +168,19 @@ class ModelSchemaBuilder {
 			},
 
 			storageInfo: {
-			}
+			},
+
+			// endregion
+
+			// region internal: for debugging only TODO(ahuszagh) Remove.
+
+			blockHeight: {
+				height: ModelType.uint64
+			},
+
+			transactionHash: {
+				hash: ModelType.binary
+			},
 
 			// endregion
 		};

@@ -192,6 +192,140 @@ class CatapultDb {
 			.then(chainStatistic => chainStatistic.current);
 	}
 
+	// TODO(ahuszagh) May need to have impl methods to allow
+	// us to do this for different collection names.
+
+	// Get the most recent transaction.
+	latestTransaction() {
+		const transactionCollection = this.database.collection('transactions');
+		const conditions = { 'meta.aggregateId': { $exists: false } };
+		return transactionCollection.find(conditions)
+			.project( { 'meta.addresses': 0 })
+			.sort({ 'meta.height': -1, 'meta.index': -1 })
+			.limit(1)
+			.toArray()
+			.then(this.sanitizer.deleteIds)
+			.then(transactions => Promise.resolve(transactions[0]));
+	}
+
+	// Internal method to get block up to (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsFromHeightAndIndex(height, index, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		const transactionCollection = this.database.collection('transactions');
+		const conditions = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
+				{ 'meta.height': { $lt: height } }
+			]},
+		]};
+
+		return transactionCollection.find(conditions)
+			.project( { 'meta.addresses': 0 })
+			.sort({ 'meta.height': -1, 'meta.index': -1 })
+			.limit(numTransactions)
+			.toArray()
+			.then(this.sanitizer.deleteIds)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Internal method to get block up to (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsSinceHeightAndIndex(height, index, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		const transactionCollection = this.database.collection('transactions');
+		const conditions = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
+				{ 'meta.height': { $gt: height } }
+			]},
+		]};
+
+		return transactionCollection.find(conditions)
+			.project( { 'meta.addresses': 0 })
+			.sort({ 'meta.height': -1, 'meta.index': -1 })
+			.limit(numTransactions)
+			.toArray()
+			.then(this.sanitizer.deleteIds)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Get the latest N transactions from (and including) the latest transaction.
+	transactionsFromLatest(numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		return this.chainStatisticCurrent().then(chainStatistic => {
+			const one = convertToLong(1);
+			const height = chainStatistic.height.add(one);
+			return this.transactionsFromHeightAndIndex(height, 0, numTransactions);
+		});
+	}
+
+	// Dummy method, to provide all transactions since (not-including) the latest.
+	// Always empty.
+	transactionsSinceLatest(numTransactions) {
+		return Promise.resolve([]);
+	}
+
+	// Get transactions up to (non-inclusive) the transaction at hash.
+	transactionsFromHash(hash, numTransactions) {
+		return this.transactionsByHashes([hash]).then(transactions => {
+			if (transactions.length !== 1) {
+				throw new Error(`invalid transaction hash ${hash}`)
+			}
+			const transaction = transactions[0];
+			const height = transaction.meta.height;
+			const index = transaction.meta.index;
+			return this.transactionsFromHeightAndIndex(height, index, numTransactions);
+		});
+	}
+
+	// Get transactions since (non-inclusive) the transaction at hash.
+	transactionsSinceHash(hash, numTransactions) {
+		return this.transactionsByHashes([hash]).then(transactions => {
+			if (transactions.length !== 1) {
+				throw new Error(`invalid transaction hash ${hash}`)
+			}
+			const transaction = transactions[0];
+			const height = transaction.meta.height;
+			const index = transaction.meta.index;
+			return this.transactionsSinceHeightAndIndex(height, index, numTransactions);
+		});
+	}
+
+	// Get transactions up to (non-inclusive) the transaction at id.
+	transactionsFromId(id, numTransactions) {
+		return this.transactionsByIds([id]).then(transactions => {
+			if (transactions.length !== 1) {
+				throw new Error(`invalid transaction hash ${hash}`)
+			}
+			const transaction = transactions[0];
+			const height = transaction.meta.height;
+			const index = transaction.meta.index;
+			return this.transactionsFromHeightAndIndex(height, index, numTransactions);
+		});
+	}
+
+	// Get transactions since (non-inclusive) the transaction at id.
+	transactionsSinceId(id, numTransactions) {
+		return this.transactionsByIds([id]).then(transactions => {
+			if (transactions.length !== 1) {
+				throw new Error(`invalid transaction hash ${hash}`)
+			}
+			const transaction = transactions[0];
+			const height = transaction.meta.height;
+			const index = transaction.meta.index;
+			return this.transactionsSinceHeightAndIndex(height, index, numTransactions);
+		});
+	}
+
 	blockAtHeight(height) {
 		return this.queryDocument(
 			'blocks',
@@ -218,6 +352,63 @@ class CatapultDb {
 			const options = buildBlocksFromOptions(convertToLong(height), convertToLong(numBlocks), chainStatistic.height);
 
 			return blockCollection.find({ 'block.height': { $gte: options.startHeight, $lt: options.endHeight } })
+				.project({ 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 })
+				.sort({ 'block.height': -1 })
+				.toArray()
+				.then(this.sanitizer.deleteIds)
+				.then(blocks => Promise.resolve(blocks));
+		});
+	}
+
+	// Updated version of blocksFrom.
+	// Gets blocks up to (non-inclusive) the height provided,
+	// returning at max `numBlocks` items.
+	blocksFromHeight(height, numBlocks) {
+		if (0 === numBlocks)
+			return Promise.resolve([]);
+
+		// We want the numBlocks preceding the height, non-inclusive.
+		// If we've provided a number above the blockHeight, go to
+		// chainHeight + 1.
+		return this.chainStatisticCurrent().then(chainStatistic => {
+			const one = convertToLong(1);
+			const count = convertToLong(numBlocks);
+			const fromHeight = convertToLong(height);
+			const chainHeight = chainStatistic.height;
+			const endHeight = fromHeight.greaterThan(chainHeight) ? chainHeight.add(one) : fromHeight;
+			const startHeight = endHeight.greaterThan(count) ? endHeight.subtract(count) : one;
+
+			const blockCollection = this.database.collection('blocks');
+			const heightConditions = { $gte: startHeight, $lt: endHeight };
+			return blockCollection.find({ 'block.height': heightConditions })
+				.project({ 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 })
+				.sort({ 'block.height': -1 })
+				.toArray()
+				.then(this.sanitizer.deleteIds)
+				.then(blocks => Promise.resolve(blocks));
+		});
+	}
+
+	// Gets blocks starting from (non-inclusive) the height provided,
+	// returning at max `numBlocks` items.
+	blocksSinceHeight(height, numBlocks) {
+		if (0 === numBlocks)
+			return Promise.resolve([]);
+
+		// We want the numBlocks following the height, non-inclusive.
+		// If we've provided a number above the blockHeight, go to
+		// chainHeight + 1 for the start (returns nothing, even if a block is added).
+		return this.chainStatisticCurrent().then(chainStatistic => {
+			const one = convertToLong(1);
+			const count = convertToLong(numBlocks);
+			const fromHeight = convertToLong(height);
+			const chainHeight = chainStatistic.height;
+			const startHeight = fromHeight.greaterThan(chainHeight) ? chainHeight.add(one) : fromHeight;
+			const endHeight = startHeight.add(count);
+
+			const blockCollection = this.database.collection('blocks');
+			const heightConditions = { $gt: convertToLong(startHeight), $lte: convertToLong(endHeight) };
+			return blockCollection.find({ 'block.height': heightConditions })
 				.project({ 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 })
 				.sort({ 'block.height': -1 })
 				.toArray()
