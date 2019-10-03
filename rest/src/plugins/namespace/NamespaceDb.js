@@ -45,6 +45,8 @@ class NamespaceDb {
 		// Sort by descending startHeight, then by ascending ID.
 		// ID is solely so we get a stable sort, since we can't actually
 		// find the order in which it was actually declared.
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
 		const sorting = { 'namespace.startHeight': -1, _id: 1 };
 		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
 			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
@@ -56,6 +58,8 @@ class NamespaceDb {
 		if (0 === numNamespaces)
 			return Promise.resolve([]);
 
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
 		const condition = { $or: [
 			{ 'namespace.startHeight': { $eq: height }, _id: { $lt: id } },
 			{ 'namespace.startHeight': { $lt: height } }
@@ -71,6 +75,8 @@ class NamespaceDb {
 		if (0 === numNamespaces)
 			return Promise.resolve([]);
 
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
 		const condition = { $or: [
 			{ 'namespace.startHeight': { $eq: height }, _id: { $gt: id } },
 			{ 'namespace.startHeight': { $gt: height } }
