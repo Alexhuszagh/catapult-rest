@@ -52,7 +52,10 @@ const namedParserMap = {
 
 		return result;
 	},
-	uint_or_latest: str => {
+	// Parse a unsigned integer or a time modifier.
+	uint_or_timemod: str => {
+		if (str === 'earliest')
+			return 0;
 		if (str === 'latest')
 			return Number.MAX_SAFE_INTEGER;
 		const result = convert.tryParseUint(str);

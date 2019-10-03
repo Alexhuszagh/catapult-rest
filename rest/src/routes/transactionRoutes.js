@@ -37,12 +37,65 @@ const getLimit = (validLimits, params) => {
 	return -1 === validLimits.indexOf(limit) ? undefined : limit;
 };
 
+// Parse object ID from string.
 const parseObjectId = str => {
 	if (!convert.isHexString(str))
 		throw Error('must be 12-byte hex string');
 
 	return str;
 };
+
+// Parse hash from string.
+const parseHash = str => convert.hexToUint8(str);
+
+// Implied method to get transactions from or since identifier.
+//	req - Request data.
+// 	res - Response data.
+//	next - Control flow callback.
+// 	pageSizes - Array of valid page sizes.
+// 	redirectUrl - Callback to get redirect URL.
+//  direction - 'From' or 'Since'.
+//  transformer - Callback to transform each element.
+//  resultType - Data result type (for formatting).
+const getTransactions = (req, res, next, db, pageSizes, redirectUrl, direction, transformer, resultType) => {
+	const transaction = req.params.transaction;
+	const limit = getLimit(pageSizes, req.params);
+	const collectionName = 'transactions';
+
+	if (!limit) {
+		return res.redirect(redirectUrl(transaction, pageSizes[0]), next);
+	}
+
+	if ('earliest' === transaction) {
+		db['transactions' + direction + 'Earliest'](collectionName, limit).then(transactions => {
+			const data = transactions.map(transformer);
+			res.send({ payload: data, type: resultType });
+			next();
+		});
+	} else if ('latest' === transaction) {
+		db['transactions' + direction + 'Latest'](collectionName, limit).then(transactions => {
+			const data = transactions.map(transformer);
+			res.send({ payload: data, type: resultType });
+			next();
+		});
+	} else if (constants.sizes.objectId === transaction.length) {
+		const id = parseObjectId(transaction);
+		db['transactions' + direction + 'Id'](collectionName, id, limit).then(transactions => {
+			const data = transactions.map(transformer);
+			res.send({ payload: data, type: resultType });
+			next();
+		});
+	} else if (constants.sizes.hash === transaction.length) {
+		const hash = parseHash(transaction);
+		db['transactions' + direction + 'Hash'](collectionName, hash, limit).then(transactions => {
+			const data = transactions.map(transformer);
+			res.send({ payload: data, type: resultType });
+			next();
+		});
+	} else {
+		throw new Error(`invalid length of transaction id '${id}'`)
+	}
+}
 
 module.exports = {
 	register: (server, db, services) => {
@@ -78,143 +131,47 @@ module.exports = {
 		// Gets transaction up to the identifier (non-inclusive).
 		// The identifier may be:
 		//	- latest (returning up-to and including the latest transaction).
+		//	- earliest (returning from the earliest transaction, IE, nothing).
 		//	- A transaction hash.
 		//	- A transaction ID.
 		server.get('/transactions/from/:transaction/limit/:limit', (req, res, next) => {
-			const transaction = req.params.transaction;
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/transactions/from/${req.params.id}/limit/${sanitizedLimit}`, next);
-			}
-
-			if ('latest' === transaction) {
-				db.transactionsFromLatest(limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else if (constants.sizes.objectId === transaction.length) {
-				const id = parseObjectId(transaction);
-				db.transactionsFromId(id, limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else if (constants.sizes.hash === transaction.length) {
-				const hash = convert.hexToUint8(transaction);
-				db.transactionsFromHash(hash, limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else {
-				throw new Error(`invalid length of transaction id '${transaction}'`)
-			}
+			const redirectUrl = (transaction, pageSize) => `/transactions/from/${transaction}/limit/${pageSize}`;
+			const direction = 'From';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.transaction;
+			return getTransactions(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// Gets transaction since the identifier (non-inclusive).
 		// The identifier may be:
 		//	- latest (returning since the latest transaction, IE, nothing).
+		//	- earliest (returning since the earliest transaction).
 		//	- A transaction hash.
 		//	- A transaction ID.
 		server.get('/transactions/since/:transaction/limit/:limit', (req, res, next) => {
-			const transaction = req.params.transaction;
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/transactions/since/${req.params.id}/limit/${sanitizedLimit}`, next);
-			}
-
-			if ('latest' === transaction) {
-				db.transactionsSinceLatest(limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else if (constants.sizes.objectId === transaction.length) {
-				const id = parseObjectId(transaction);
-				db.transactionsSinceId(id, limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else if (constants.sizes.hash === transaction.length) {
-				const hash = convert.hexToUint8(transaction);
-				db.transactionsSinceHash(hash, limit).then(transactions => {
-					res.send({ payload: transactions, type: routeResultTypes.transaction });
-					next();
-				});
-			} else {
-				throw new Error(`invalid length of transaction id '${id}'`)
-			}
+			const redirectUrl = (transaction, pageSize) => `/transactions/since/${transaction}/limit/${pageSize}`;
+			const direction = 'Since';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.transaction;
+			return getTransactions(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/from/:transaction/limit/:limit/hash', (req, res, next) => {
-			const transaction = req.params.transaction;
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/transactions/from/${req.params.id}/limit/${sanitizedLimit}`, next);
-			}
-
-			if ('latest' === transaction) {
-				db.transactionsFromLatest(limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else if (constants.sizes.objectId === transaction.length) {
-				const id = parseObjectId(transaction);
-				db.transactionsFromId(id, limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else if (constants.sizes.hash === transaction.length) {
-				const hash = convert.hexToUint8(transaction);
-				db.transactionsFromHash(hash, limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else {
-				throw new Error(`invalid length of transaction id '${id}'`)
-			}
+			const redirectUrl = (transaction, pageSize) => `/transactions/from/${transaction}/limit/${pageSize}/hash`;
+			const direction = 'From';
+			const transformer = (info) => { return { hash: info.meta.hash }; };
+			const resultType = routeResultTypes.transactionHash;
+			return getTransactions(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/since/:transaction/limit/:limit/hash', (req, res, next) => {
-			const transaction = req.params.transaction;
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/transactions/since/${req.params.id}/limit/${sanitizedLimit}`, next);
-			}
-
-			if ('latest' === transaction) {
-				db.transactionsSinceLatest(limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else if (constants.sizes.objectId === transaction.length) {
-				const id = parseObjectId(transaction);
-				db.transactionsSinceId(id, limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else if (constants.sizes.hash === transaction.length) {
-				const hash = convert.hexToUint8(transaction);
-				db.transactionsSinceHash(hash, limit).then(transactions => {
-					const transactionHashes = transactions.map(info => { return { hash: info.meta.hash }; });
-					res.send({ payload: transactionHashes, type: routeResultTypes.transactionHash });
-					next();
-				});
-			} else {
-				throw new Error(`invalid length of transaction id '${id}'`)
-			}
+			const redirectUrl = (transaction, pageSize) => `/transactions/since/${transaction}/limit/${pageSize}/hash`;
+			const direction = 'Since';
+			const transformer = (info) => { return { hash: info.meta.hash }; };
+			const resultType = routeResultTypes.transactionHash;
+			return getTransactions(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 	}
 };

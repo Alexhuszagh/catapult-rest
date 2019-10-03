@@ -35,8 +35,9 @@ const currySend = (db, res, next) => chainStatistic => {
 
 module.exports = {
 	register: (server, db) => {
+		// Get the latest transaction posted to the chain.
 		server.get('/chain/transaction', (req, res, next) => {
-			db.latestTransaction().then(transaction => {
+			db.latestTransaction('transactions').then(transaction => {
 				res.send({ payload: transaction, type: routeResultTypes.transaction });
 				next();
 			});

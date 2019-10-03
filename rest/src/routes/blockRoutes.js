@@ -25,7 +25,7 @@ const routeUtils = require('./routeUtils');
 const errors = require('../server/errors');
 
 const parseHeight = params => routeUtils.parseArgument(params, 'height', 'uint');
-const parseHeightOrLatest = params => routeUtils.parseArgument(params, 'height', 'uint_or_latest');
+const parseHeightOrTimeMod = params => routeUtils.parseArgument(params, 'height', 'uint_or_timemod');
 
 const getLimit = (validLimits, params) => {
 	const limit = routeUtils.parseArgument(params, 'limit', 'uint');
@@ -33,6 +33,30 @@ const getLimit = (validLimits, params) => {
 };
 
 const alignDown = (height, alignment) => (Math.floor((height - 1) / alignment) * alignment) + 1;
+
+// Implied method to get blocks from or since height.
+//	req - Request data.
+// 	res - Response data.
+//	next - Control flow callback.
+// 	pageSizes - Array of valid page sizes.
+// 	redirectUrl - Callback to get redirect URL.
+//  direction - 'From' or 'Since'.
+//  transformer - Callback to transform each element.
+//  resultType - Data result type (for formatting).
+const getBlocks = (req, res, next, db, pageSizes, redirectUrl, direction, transformer, resultType) => {
+	const height = parseHeightOrTimeMod(req.params);
+	const limit = getLimit(pageSizes, req.params);
+
+	if (!limit) {
+		return res.redirect(redirectUrl(req.params.height, pageSizes[0]), next);
+	}
+
+	return db['blocks' + direction + 'Height'](height, limit).then(blocks => {
+		const data = blocks.map(transformer);
+		res.send({ payload: data, type: resultType });
+		next();
+	});
+};
 
 module.exports = {
 	register: (server, db, { config }) => {
@@ -84,71 +108,47 @@ module.exports = {
 		});
 
 		// Gets blocks up to the height (non-inclusive).
-		// `latest` may be provided for the latest `:limit` number of blocks.
+		// The height may be:
+		//	- latest (returning from the latest block).
+		//	- earliest (returning from the earliest block, IE, nothing).
+		//	- A block height (as a number).
 		server.get('/blocks/from/:height/limit/:limit', (req, res, next) => {
-			const height = parseHeightOrLatest(req.params);
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/blocks/from/${req.params.height}/limit/${sanitizedLimit}`, next);
-			}
-
-			return db.blocksFromHeight(height, limit).then(blocks => {
-				res.send({ payload: blocks, type: routeResultTypes.block });
-				next();
-			});
+			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}`;
+			const direction = 'From';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.block;
+			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// Gets blocks starting from the height (non-inclusive).
-		// `0` may be provided for the first `:limit` number of blocks.
+		// The height may be:
+		//	- latest (returning since the latest block, IE, nothing).
+		//	- earliest (returning since the earliest block).
+		//	- A block height (as a number).
 		server.get('/blocks/since/:height/limit/:limit', (req, res, next) => {
-			const height = parseHeightOrLatest(req.params);
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/blocks/since/${req.params.height}/limit/${sanitizedLimit}`, next);
-			}
-
-			return db.blocksSinceHeight(height, limit).then(blocks => {
-				res.send({ payload: blocks, type: routeResultTypes.block });
-				next();
-			});
+			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}`;
+			const direction = 'Since';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.block;
+			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/from/:height/limit/:limit/height', (req, res, next) => {
-			const height = parseHeightOrLatest(req.params);
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/blocks/from/${req.params.height}/limit/${sanitizedLimit}/heights`, next);
-			}
-
-			return db.blocksFromHeight(height, limit).then(blocks => {
-				const blockHeights = blocks.map(blockInfo => { return { height: blockInfo.block.height }; });
-				res.send({ payload: blockHeights, type: routeResultTypes.blockHeight });
-				next();
-			});
+			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}/height`;
+			const direction = 'From';
+			const transformer = (info) => { return { height: info.block.height }; };
+			const resultType = routeResultTypes.blockHeight;
+			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/since/:height/limit/:limit/height', (req, res, next) => {
-			const height = parseHeightOrLatest(req.params);
-			const limit = getLimit(validPageSizes, req.params);
-
-			if (!limit) {
-				const sanitizedLimit = validPageSizes[0];
-				return res.redirect(`/blocks/since/${req.params.height}/limit/${sanitizedLimit}/heights`, next);
-			}
-
-			return db.blocksSinceHeight(height, limit).then(blocks => {
-				const blockHeights = blocks.map(blockInfo => { return { height: blockInfo.block.height }; });
-				res.send({ payload: blockHeights, type: routeResultTypes.blockHeight });
-				next();
-			});
+			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}/height`;
+			const direction = 'Since';
+			const transformer = (info) => { return { height: info.block.height }; };
+			const resultType = routeResultTypes.blockHeight;
+			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
 		});
 	}
 };
