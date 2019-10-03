@@ -191,6 +191,16 @@ class CatapultDb {
 			.toArray();
 	}
 
+	// Retrieve sorted items from collection as an array.
+	sortedCollection(collectionName, condition, projection, sorting, count) {
+		const collection = this.database.collection(collectionName);
+		return collection.find(condition)
+			.project(projection)
+			.sort(sorting)
+			.limit(count)
+			.toArray();
+	}
+
 	// endregion
 
 	// region retrieval
@@ -216,28 +226,15 @@ class CatapultDb {
 			.then(chainStatistic => chainStatistic.current);
 	}
 
-	// TODO(ahuszagh) May need to have impl methods to allow
-	// us to do this for different collection names.
-
 	// Internal method to find sorted transactions from query.
 	sortedTransactions(collectionName, condition, count) {
-		const collection = this.database.collection(collectionName);
-		return collection.find(condition)
-			.project( { 'meta.addresses': 0 })
-			.sort({ 'meta.height': -1, 'meta.index': -1 })
-			.limit(count)
-			.toArray()
+		const projection = { 'meta.addresses': 0 };
+		const sorting = { 'meta.height': -1, 'meta.index': -1 };
+		return this.sortedCollection(collectionName, condition, projection, sorting, count)
 			.then(this.sanitizer.deleteIds)
 	}
 
-	// Get the most recent transaction.
-	latestTransaction(collectionName) {
-		const condition = { 'meta.aggregateId': { $exists: false } };
-		return this.sortedTransactions(collectionName, condition, 1)
-			.then(transactions => Promise.resolve(transactions[0]));
-	}
-
-	// Internal method to get block up to (non-inclusive) the block height
+	// Internal method to get transactions up to (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsFromHeightAndIndex(collectionName, height, index, numTransactions) {
 		if (0 === numTransactions)
@@ -255,7 +252,7 @@ class CatapultDb {
 			.then(transactions => Promise.resolve(transactions));
 	}
 
-	// Internal method to get block up to (non-inclusive) the block height
+	// Internal method to get transactions since (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions) {
 		if (0 === numTransactions)
@@ -306,12 +303,14 @@ class CatapultDb {
 		return Promise.resolve([]);
 	}
 
+	// Get transactions up to (non-inclusive) a transaction object.
 	transactionsFromTransaction(collectionName, transaction, numTransactions) {
 		const height = transaction.meta.height;
 		const index = transaction.meta.index;
 		return this.transactionsFromHeightAndIndex(collectionName, height, index, numTransactions);
 	}
 
+	// Get transactions since (non-inclusive) a transaction object.
 	transactionsSinceTransaction(collectionName, transaction, numTransactions) {
 		const height = transaction.meta.height;
 		const index = transaction.meta.index;
@@ -393,12 +392,11 @@ class CatapultDb {
 	}
 
 	// Internal method to find sorted blocks from query.
-	sortedBlocks(collectionName, condition) {
-		const collection = this.database.collection(collectionName);
-		return collection.find(condition)
-			.project({ 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 })
-			.sort({ 'block.height': -1 })
-			.toArray()
+	sortedBlocks(collectionName, condition, count) {
+		const projection = { 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 };
+		const sorting = { 'block.height': -1 };
+		// Provide a limit of 0: equivalent to no limit.
+		return this.sortedCollection(collectionName, condition, projection, sorting, count)
 			.then(this.sanitizer.deleteIds);
 	}
 
@@ -412,7 +410,7 @@ class CatapultDb {
 		return this.chainStatisticCurrent().then(chainStatistic => {
 			const { startHeight, endHeight } = calculateFromHeight(convertToLong(height), chainStatistic.height, numBlocks);
 			const condition = { 'block.height': { $gte: startHeight, $lt: endHeight } };
-			return this.sortedBlocks('blocks', condition)
+			return this.sortedBlocks('blocks', condition, numBlocks)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}
@@ -426,7 +424,7 @@ class CatapultDb {
 		return this.chainStatisticCurrent().then(chainStatistic => {
 			const { startHeight, endHeight } = calculateSinceHeight(convertToLong(height), chainStatistic.height, numBlocks);
 			const condition = { 'block.height': { $gt: startHeight, $lte: endHeight } };
-      return this.sortedBlocks('blocks', condition)
+      return this.sortedBlocks('blocks', condition, numBlocks)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}

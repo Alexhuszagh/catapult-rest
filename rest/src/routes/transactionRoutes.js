@@ -93,7 +93,7 @@ const getTransactions = (req, res, next, db, pageSizes, redirectUrl, direction, 
 			next();
 		});
 	} else {
-		throw new Error(`invalid length of transaction id '${id}'`)
+		throw new Error(`invalid length of transaction id '${transaction}'`)
 	}
 }
 
@@ -127,6 +127,8 @@ module.exports = {
 				throw Error(`invalid length of transaction id '${transactionId}'`);
 			}
 		);
+
+		// CURSORS
 
 		// Gets transaction up to the identifier (non-inclusive).
 		// The identifier may be:

@@ -35,16 +35,6 @@ const currySend = (db, res, next) => chainStatistic => {
 
 module.exports = {
 	register: (server, db) => {
-		// Get the latest transaction posted to the chain.
-		server.get('/chain/transaction', (req, res, next) => {
-			db.latestTransaction('transactions').then(transaction => {
-				res.send({ payload: transaction, type: routeResultTypes.transaction });
-				next();
-			});
-		});
-
-		// TODO(ahuszagh) Add chain/namespace and chain/mosaic
-
 		server.get('/chain/height', (req, res, next) =>
 			db.chainStatisticCurrent().then(curryStripProperties(['scoreLow', 'scoreHigh'], currySend(db, res, next))));
 

@@ -107,6 +107,8 @@ module.exports = {
 			});
 		});
 
+		// CURSORS
+
 		// Gets blocks up to the height (non-inclusive).
 		// The height may be:
 		//	- latest (returning from the latest block).

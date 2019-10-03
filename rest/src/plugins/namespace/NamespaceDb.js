@@ -39,7 +39,111 @@ class NamespaceDb {
 		this.catapultDb = db;
 	}
 
+	// Internal method to find sorted namespaces from query.
+	sortedNamespaces(collectionName, condition, count) {
+		const projection = {};
+		// Sort by descending startHeight, then by ascending ID.
+		// ID is solely so we get a stable sort, since we can't actually
+		// find the order in which it was actually declared.
+		const sorting = { 'namespace.startHeight': -1, _id: 1 };
+		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
+			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
+	}
+
+	// Internal method to get namespaces up to (non-inclusive) the block height
+	// and the namespace ID, returning at max `numNamespaces` items.
+	namespacesFromHeightAndId(collectionName, height, id, numNamespaces) {
+		if (0 === numNamespaces)
+			return Promise.resolve([]);
+
+		const condition = { $or: [
+			{ 'namespace.startHeight': { $eq: height }, _id: { $lt: id } },
+			{ 'namespace.startHeight': { $lt: height } }
+		]};
+
+		return this.sortedNamespaces(collectionName, condition, numNamespaces)
+			.then(namespaces => Promise.resolve(namespaces));
+	}
+
+	// Internal method to get namespaces since (non-inclusive) the block height
+	// and the namespace ID, returning at max `numNamespaces` items.
+	namespacesSinceHeightAndId(collectionName, height, id, numNamespaces) {
+		if (0 === numNamespaces)
+			return Promise.resolve([]);
+
+		const condition = { $or: [
+			{ 'namespace.startHeight': { $eq: height }, _id: { $gt: id } },
+			{ 'namespace.startHeight': { $gt: height } }
+		]};
+
+		return this.sortedNamespaces(collectionName, condition, numNamespaces)
+			.then(namespaces => Promise.resolve(namespaces));
+	}
+
 	// region namespace retrieval
+
+	// Dummy method, to provide all namespaces from (not-including) the earliest.
+	// Always empty.
+	namespacesFromEarliest(collectionName, numNamespaces) {
+		return Promise.resolve([]);
+	}
+
+	// Get the earliest N namespaces since (and including) the earliest namespace.
+	namespacesSinceEarliest(collectionName, numNamespaces) {
+		if (0 === numNamespaces)
+			return Promise.resolve([]);
+
+		const height = convertToLong(0);
+		const id = convertToLong(0);
+		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
+	}
+
+	// Get the latest N namespaces from (and including) the latest namespace.
+	namespacesFromLatest(collectionName, numNamespaces) {
+		if (0 === numNamespaces)
+			return Promise.resolve([]);
+
+		return this.catapultDb.chainStatisticCurrent().then(chainStatistic => {
+			const one = convertToLong(1);
+			const height = chainStatistic.height.add(one);
+			const id = convertToLong(0);
+			return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
+		});
+	}
+
+	// Dummy method, to provide all namespaces since (not-including) the latest.
+	// Always empty.
+	namespacesSinceLatest(collectionName, numNamespaces) {
+		return Promise.resolve([]);
+	}
+
+	// Get namespaces up to (non-inclusive) a namespace object.
+	namespacesFromNamespace(collectionName, namespace, numNamespaces) {
+		const height = namespace.namespace.startHeight;
+		const id = namespace.meta.id;
+		return this.namespacesFromHeightAndId(collectionName, height, index, numNamespaces);
+	}
+
+	// Get namespaces since (non-inclusive) a namespace object.
+	namespacesSinceNamespace(collectionName, namespace, numNamespaces) {
+		const height = namespace.namespace.startHeight;
+		const id = namespace.meta.id;
+		return this.namespacesSinceHeightAndId(collectionName, height, index, numNamespaces);
+	}
+
+	// Get namespaces up to (non-inclusive) the namespace at id.
+	namespacesFromId(collectionName, id, numNamespaces) {
+		return this.namespaceById(id).then(namespace => {
+			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
+		});
+	}
+
+	// Get namespaces since (non-inclusive) the namespace at id.
+	namespacesSinceId(collectionName, id, numNamespaces) {
+		return this.namespaceById(id).then(namespace => {
+			return this.transactionsSinceNamespace(collectionName, namespaces[0], numNamespaces);
+		});
+	}
 
 	/**
 	 * Retrieves a namespace.
