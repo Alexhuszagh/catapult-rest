@@ -47,7 +47,7 @@ const getBlocks = (req, res, next, db, collectionName, countRange, redirectUrl, 
 
 	const dbMethod = 'blocks' + duration + 'Height';
 	const dbArgs = [collectionName, height, limit];
-	routeUtils.queryAndSendDurationCollection(res, next, db, dbMethod, dbArgs, transformer, resultType);
+	routeUtils.queryAndSendDurationCollection(res, next, height, db, dbMethod, dbArgs, transformer, resultType);
 };
 
 module.exports = {
@@ -94,7 +94,6 @@ module.exports = {
 				return res.redirect(`/blocks/${sanitizedHeight}/limit/${sanitizedLimit}`, next); // redirect calls next
 
 			return db.blocksFrom(height, limit).then(blocks => {
-				console.log(`blocks=${blocks}`)
 				res.send({ payload: blocks, type: routeResultTypes.block });
 				next();
 			});
@@ -109,7 +108,7 @@ module.exports = {
 		//	- A block height (as a number).
 		server.get('/blocks/from/:height/limit/:limit', (req, res, next) => {
 			const collectionName = 'blocks';
-			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}`;
+			const redirectUrl = (height, limit) => `/blocks/from/${height}/limit/${limit}`;
 			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
@@ -123,7 +122,7 @@ module.exports = {
 		//	- A block height (as a number).
 		server.get('/blocks/since/:height/limit/:limit', (req, res, next) => {
 			const collectionName = 'blocks';
-			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}`;
+			const redirectUrl = (height, limit) => `/blocks/since/${height}/limit/${limit}`;
 			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
@@ -133,7 +132,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/from/:height/limit/:limit/height', (req, res, next) => {
 			const collectionName = 'blocks';
-			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}/height`;
+			const redirectUrl = (height, limit) => `/blocks/from/${height}/limit/${limit}/height`;
 			const duration = 'From';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;
@@ -143,7 +142,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/since/:height/limit/:limit/height', (req, res, next) => {
 			const collectionName = 'blocks';
-			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}/height`;
+			const redirectUrl = (height, limit) => `/blocks/since/${height}/limit/${limit}/height`;
 			const duration = 'Since';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;

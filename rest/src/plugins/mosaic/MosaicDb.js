@@ -35,13 +35,16 @@ class MosaicDb {
 
 	// Internal method to find sorted mosaics from query.
 	sortedMosaics(collectionName, condition, count) {
-		const projection = {};
 		// Sort by descending startHeight, then by descending ID.
 		// Don't sort solely on ID, since it will break if 32-bit time wraps.
 		// TODO(ahuszagh)
 		//	WARNING: startHeight is not indexed: this must be fixed in production.
 		const sorting = { 'mosaic.startHeight': -1, _id: -1 };
-		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
+    return this.catapultDb.database.collection(collectionName)
+      .find(condition)
+      .sort(sorting)
+      .limit(count)
+      .toArray()
 			.then(this.catapultDb.sanitizer.deleteIds);
 	}
 
@@ -118,16 +121,20 @@ class MosaicDb {
 
   // Get mosaics up to (non-inclusive) a mosaic object.
   mosaicsFromMosaic(collectionName, mosaic, numMosaics) {
+    if (undefined === mosaic)
+      return undefined;
     const height = mosaic.mosaic.startHeight;
-    const id = mosaic.meta.id;
-    return this.mosaicsFromHeightAndId(collectionName, height, index, numMosaics);
+    const id = mosaic._id;
+    return this.mosaicsFromHeightAndId(collectionName, height, id, numMosaics);
   }
 
   // Get mosaics since (non-inclusive) a mosaic object.
   mosaicsSinceMosaic(collectionName, mosaic, numMosaics) {
+    if (undefined === mosaic)
+      return undefined;
     const height = mosaic.mosaic.startHeight;
-    const id = mosaic.meta.id;
-    return this.mosaicsSinceHeightAndId(collectionName, height, index, numMosaics);
+    const id = mosaic._id;
+    return this.mosaicsSinceHeightAndId(collectionName, height, id, numMosaics);
   }
 
   // Get mosaics up to (non-inclusive) the mosaic at id.
@@ -144,12 +151,12 @@ class MosaicDb {
     });
   }
 
-  // Retrieve mosaic by ID.
+  // Internal method: Retrieve mosaic by ID.
+  // Leaves an extraneous _id.
   mosaicById(collectionName, id) {
 		const mosaicId = new Long(id[0], id[1]);
 		const condition = { 'mosaic.id': { $eq: mosaicId } };
-		return this.catapultDb.queryDocument(collectionName, condition)
-			.then(this.catapultDb.sanitizer.deleteId);
+		return this.catapultDb.queryDocument(collectionName, condition);
   }
 
 	/**

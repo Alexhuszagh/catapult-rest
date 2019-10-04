@@ -191,12 +191,18 @@ class CatapultDb {
 			.toArray();
 	}
 
-	// Retrieve sorted items from collection as an array.
-	sortedCollection(collectionName, condition, projection, sorting, count) {
+	//	Remove sortedAggregateCollection
+	//	Replace with direct query methods we need.
+
+	// Retrieve sorted items using an aggregate find/match as an array.
+	sortedAggregateCollection(collectionName, aggregation, projection, sorting, count) {
+		// TODO(ahuszagh) These steps should run conditionally....
+		// Only if they're present...
 		const collection = this.database.collection(collectionName);
-		return collection.find(condition)
-			.project(projection)
+		return collection
+			.aggregate(aggregation)
 			.sort(sorting)
+			.project(projection)
 			.limit(count)
 			.toArray();
 	}
@@ -226,12 +232,56 @@ class CatapultDb {
 			.then(chainStatistic => chainStatistic.current);
 	}
 
+// TODO(ahuszagh) Need to think of how to do this.
+//	First, need to add a addFields aggregate step.
+//	Then, need to match aggregate step.
+//	Then, need a convert step.
+// 	Then, need to sort.
+//	Then, need to project to remove the added fields.
+
+	// Internal method to find sorted accounts by balance from query.
+	sortedAccountsByBalance(collectionName, match, count) {
+		// TODO(ahuszagh) Implement.
+		const aggregation = {};
+		const sorting = { _id: -1 };
+		const projection = {};
+		return this.sortedAggregateCollection(collectionName, aggregation, projection, sorting, count)
+			.then(this.sanitizer.deleteIds)
+	}
+
+//	// Internal method to find sorted accounts by importance from query.
+//	sortedAccountsByImportance(collectionName, match, count) {
+//		// TODO(ahuszagh) This needs to be done by....
+//		const sorting = {};	// TODO(ahuszagh) Implement.
+//		return this.sortedAccounts(collectionName, match, sorting, count)
+//			.then(this.sanitizer.deleteIds)
+//	}
+//
+//	// Internal method to find sorted accounts by harvested blocks from query.
+//	sortedAccountsByHarvestedBlocks(collectionName, match, count) {
+//		const sorting = {};	// TODO(ahuszagh) Implement.
+//		return this.sortedAccounts(collectionName, match, sorting, count)
+//			.then(this.sanitizer.deleteIds)
+//	}
+//
+//	// Internal method to find sorted accounts by harvested fees from query.
+//	sortedAccountsByHarvestedFees(collectionName, match, count) {
+//		const sorting = {};	// TODO(ahuszagh) Implement.
+//		return this.sortedAccounts(collectionName, match, sorting, count)
+//			.then(this.sanitizer.deleteIds)
+//	}
+
 	// Internal method to find sorted transactions from query.
 	sortedTransactions(collectionName, condition, count) {
 		const projection = { 'meta.addresses': 0 };
 		const sorting = { 'meta.height': -1, 'meta.index': -1 };
-		return this.sortedCollection(collectionName, condition, projection, sorting, count)
-			.then(this.sanitizer.copyAndDeleteIds)
+		return this.database.collection(collectionName)
+			.find(condition)
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.copyAndDeleteIds);
 	}
 
 	// Internal method to get transactions up to (non-inclusive) the block height
@@ -305,6 +355,8 @@ class CatapultDb {
 
 	// Get transactions up to (non-inclusive) a transaction object.
 	transactionsFromTransaction(collectionName, transaction, numTransactions) {
+		if (undefined === transaction)
+			return undefined;
 		const height = transaction.meta.height;
 		const index = transaction.meta.index;
 		return this.transactionsFromHeightAndIndex(collectionName, height, index, numTransactions);
@@ -312,6 +364,8 @@ class CatapultDb {
 
 	// Get transactions since (non-inclusive) a transaction object.
 	transactionsSinceTransaction(collectionName, transaction, numTransactions) {
+		if (undefined === transaction)
+			return undefined;
 		const height = transaction.meta.height;
 		const index = transaction.meta.index;
 		return this.transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions);
@@ -360,6 +414,123 @@ class CatapultDb {
 		});
 	}
 
+	// Internal method to get transactions filtered by type up to (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsByTypeFromHeightAndIndex(collectionName, height, index, type, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
+				{ 'meta.height': { $lt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, numTransactions)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Internal method to get transactions filtered by type since (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsByTypeSinceHeightAndIndex(collectionName, height, index, type, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
+				{ 'meta.height': { $gt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, numTransactions)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Dummy method, to provide all transactions filtered by type from (not-including) the earliest.
+	// Always empty.
+	transactionsByTypeFromEarliest(collectionName, type, numTransactions) {
+		return Promise.resolve([]);
+	}
+
+	// Get the earliest N transactions filtered by type since (and including) the earliest transaction.
+	transactionsByTypeSinceEarliest(collectionName,type, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		const height = convertToLong(0);
+		return this.transactionsByTypeSinceHeightAndIndex(collectionName, height, -1, type, numTransactions);
+	}
+
+	// Get the latest N transactions filtered by type from (and including) the latest transaction.
+	transactionsByTypeFromLatest(collectionName, type, numTransactions) {
+		if (0 === numTransactions)
+			return Promise.resolve([]);
+
+		return this.chainStatisticCurrent().then(chainStatistic => {
+			const one = convertToLong(1);
+			const height = chainStatistic.height.add(one);
+			return this.transactionsByTypeFromHeightAndIndex(collectionName, height, 0, type, numTransactions);
+		});
+	}
+
+	// Dummy method, to provide all transactions filtered by type since (not-including) the latest.
+	// Always empty.
+	transactionsByTypeSinceLatest(collectionName, type, numTransactions) {
+		return Promise.resolve([]);
+	}
+
+	// Get transactions filtered by type up to (non-inclusive) a transaction object.
+	transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions) {
+  	if (undefined === transaction)
+      return undefined;
+		const height = transaction.meta.height;
+		const index = transaction.meta.index;
+		return this.transactionsByTypeFromHeightAndIndex(collectionName, height, index, type, numTransactions);
+	}
+
+	// Get transactions filtered by type since (non-inclusive) a transaction object.
+	transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions) {
+  	if (undefined === transaction)
+      return undefined;
+		const height = transaction.meta.height;
+		const index = transaction.meta.index;
+		return this.transactionsByTypeSinceHeightAndIndex(collectionName, height, index, type, numTransactions);
+	}
+
+	// Get transactions filtered by type up to (non-inclusive) the transaction at hash.
+	transactionsByTypeFromHash(collectionName, hash, type, numTransactions) {
+		return this.transactionByHash(collectionName, hash).then(transaction => {
+			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
+		});
+	}
+
+	// Get transactions filtered by type since (non-inclusive) the transaction at hash.
+	transactionsByTypeSinceHash(collectionName, hash, type, numTransactions) {
+		return this.transactionByHash(collectionName, hash).then(transaction => {
+			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
+		});
+	}
+
+	// Get transactions filtered by type up to (non-inclusive) the transaction at id.
+	transactionsByTypeFromId(collectionName, id, type, numTransactions) {
+		return this.transactionById(collectionName, id).then(transaction => {
+			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
+		});
+	}
+
+	// Get transactions filtered by type since (non-inclusive) the transaction at id.
+	transactionsByTypeSinceId(collectionName, id, type, numTransactions) {
+		return this.transactionById(collectionName, id).then(transaction => {
+			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
+		});
+	}
+
 	blockAtHeight(height) {
 		return this.queryDocument(
 			'blocks',
@@ -398,8 +569,12 @@ class CatapultDb {
 	sortedBlocks(collectionName, condition, count) {
 		const projection = { 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 };
 		const sorting = { 'block.height': -1 };
-		// Provide a limit of 0: equivalent to no limit.
-		return this.sortedCollection(collectionName, condition, projection, sorting, count)
+		return this.database.collection(collectionName)
+			.find(condition)
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
 			.then(this.sanitizer.deleteIds);
 	}
 

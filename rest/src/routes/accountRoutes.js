@@ -26,6 +26,8 @@ const catapult = require('catapult-sdk');
 
 const { address, networkInfo } = catapult.model;
 
+// TODO(ahuszagh) getAccounts.
+
 module.exports = {
 	register: (server, db, services) => {
 		const transactionSender = routeUtils.createSender(routeResultTypes.transaction);
@@ -93,5 +95,14 @@ module.exports = {
 		});
 
 		// endregion
+		// Debug method. TODO(ahuszagh) Remove.
+		server.get('/accounts/testing', (req, res, next) => {
+			db.sortedAccountsByBalance('accounts', {}, 25).then(accounts => {
+				res.send({ payload: accounts, type: routeResultTypes.account });
+				next();
+			});
+		});
+
+		// TODO(ahuszagh) Add rich list, etc.
 	}
 };

@@ -41,13 +41,16 @@ class NamespaceDb {
 
 	// Internal method to find sorted namespaces from query.
 	sortedNamespaces(collectionName, condition, count) {
-		const projection = {};
 		// Sort by descending startHeight, then by descending ID.
 		// Don't sort solely on ID, since it will break if 32-bit time wraps.
 		// TODO(ahuszagh)
 		//	WARNING: startHeight is not indexed: this must be fixed in production.
 		const sorting = { 'namespace.startHeight': -1, _id: -1 };
-		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
+		return this.catapultDb.database.collection(collectionName)
+      .find(condition)
+      .sort(sorting)
+      .limit(count)
+      .toArray()
 			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
 	}
 
@@ -124,6 +127,8 @@ class NamespaceDb {
 
 	// Get namespaces up to (non-inclusive) a namespace object.
 	namespacesFromNamespace(collectionName, namespace, numNamespaces) {
+		if (undefined === namespace)
+			return undefined;
 		const height = namespace.namespace.startHeight;
 		const id = namespace.meta.id;
 		return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
@@ -131,6 +136,8 @@ class NamespaceDb {
 
 	// Get namespaces since (non-inclusive) a namespace object.
 	namespacesSinceNamespace(collectionName, namespace, numNamespaces) {
+		if (undefined === namespace)
+			return undefined;
 		const height = namespace.namespace.startHeight;
 		const id = namespace.meta.id;
 		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
@@ -166,7 +173,8 @@ class NamespaceDb {
 
 	// Retrieve namespace by object ID.
 	namespaceByObjectId(collectionName, id) {
-		const condition = { _id: { $eq: id } };
+		const namespaceId = new ObjectId(id);
+		const condition = { _id: { $eq: namespaceId } };
 		return this.catapultDb.queryDocument(collectionName, condition)
 			.then(this.catapultDb.sanitizer.copyAndDeleteId);
 	}

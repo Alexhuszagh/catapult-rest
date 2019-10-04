@@ -20,6 +20,7 @@
 
 const routeResultTypes = require('./routeResultTypes');
 const routeUtils = require('./routeUtils');
+const errors = require('../server/errors');
 const catapult = require('catapult-sdk');
 
 const { convert } = catapult.utils;
@@ -61,13 +62,56 @@ const getTransactions = (req, res, next, db, collectionName, countRange, redirec
 		dbMethod = 'transactions' + duration + 'Hash';
 		dbArgs = [collectionName, hash, limit];
 	} else {
-		throw new Error(`invalid transaction identifier '${transaction}'`)
+		res.send(errors.createInvalidArgumentError('transactionId has an invalid format'));
+    return next();
 	}
 
-	routeUtils.queryAndSendDurationCollection(res, next, db, dbMethod, dbArgs, transformer, resultType);
+	routeUtils.queryAndSendDurationCollection(res, next, transaction, db, dbMethod, dbArgs, transformer, resultType);
 }
 
-// TODO(ahuszagh) Need a way to get transactions by type.
+// Implied method to get transactions filtered by type from or since identifier.
+//  req - Request data.
+//  res - Response data.
+//  next - Control flow callback.
+//  db - Database utility.
+//  collectionName - Name of the collection to query.
+//  countRange - Range of valid query counts.
+//  redirectUrl - Callback to get redirect URL.
+//  duration - 'From' or 'Since'.
+//  transformer - Callback to transform each element.
+//  resultType - Data result type (for formatting).
+const getTransactionsByType = (req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType) => {
+  const transaction = req.params.transaction;
+  const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
+  const type = routeUtils.parseArgument(req.params, 'type', 'transactionType');
+
+  if (!limit) {
+      return res.redirect(redirectUrl(transaction, req.params.type, countRange.preset), next);
+  }
+
+  let dbMethod;
+  let dbArgs;
+  if (routeUtils.validateValue(transaction, 'earliest')) {
+      dbMethod = 'transactionsByType' + duration + 'Earliest';
+      dbArgs = [collectionName, type, limit];
+  } else if (routeUtils.validateValue(transaction, 'latest')) {
+      dbMethod = 'transactionsByType' + duration + 'Latest';
+      dbArgs = [collectionName, type, limit];
+  } else if (routeUtils.validateValue(transaction, 'objectId')) {
+      const id = routeUtils.parseValue(transaction, 'objectId');
+      dbMethod = 'transactionsByType' + duration + 'Id';
+      dbArgs = [collectionName, id, type, limit];
+  } else if (routeUtils.validateValue(transaction, 'hash256')) {
+      const hash = routeUtils.parseValue(transaction, 'hash256');
+      dbMethod = 'transactionsByType' + duration + 'Hash';
+      dbArgs = [collectionName, hash, type, limit];
+  } else {
+    res.send(errors.createInvalidArgumentError('transactionId has an invalid format'));
+    return next();
+  }
+
+  routeUtils.queryAndSendDurationCollection(res, next, transaction, db, dbMethod, dbArgs, transformer, resultType);
+}
 
 module.exports = {
 	register: (server, db, services) => {
@@ -110,7 +154,7 @@ module.exports = {
 		//	- A transaction ID.
 		server.get('/transactions/from/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'transactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/from/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/from/${transaction}/limit/${limit}`;
 			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -125,7 +169,7 @@ module.exports = {
 		//	- A transaction ID.
 		server.get('/transactions/since/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'transactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/since/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/since/${transaction}/limit/${limit}`;
 			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -135,7 +179,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/from/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'transactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/from/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/from/${transaction}/limit/${limit}/hash`;
 			const duration = 'From';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;
@@ -145,7 +189,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/since/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'transactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/since/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/since/${transaction}/limit/${limit}/hash`;
 			const duration = 'Since';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;
@@ -154,7 +198,55 @@ module.exports = {
 
 		// CURSORS -- CONFIRMED TRANSACTIONS BY TYPE
 
-		// TODO(ahuszagh) Need to implement...
+		// Gets transactions filtered by type up to the identifier (non-inclusive).
+		// The identifier may be:
+		//	- latest (returning up-to and including the latest transaction).
+		//	- earliest (returning from the earliest transaction, IE, nothing).
+		//	- A transaction hash.
+		//	- A transaction ID.
+		server.get('/transactions/from/:transaction/type/:type/limit/:limit', (req, res, next) => {
+			const collectionName = 'transactions';
+			const redirectUrl = (transaction, type, limit) => `/transactions/from/${transaction}/type/${type}/limit/${limit}`;
+			const duration = 'From';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.transaction;
+			return getTransactionsByType(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+		});
+
+		// Gets transactions filtered by type since the identifier (non-inclusive).
+		// The identifier may be:
+		//	- latest (returning since the latest transaction, IE, nothing).
+		//	- earliest (returning since the earliest transaction).
+		//	- A transaction hash.
+		//	- A transaction ID.
+		server.get('/transactions/since/:transaction/type/:type/limit/:limit', (req, res, next) => {
+			const collectionName = 'transactions';
+			const redirectUrl = (transaction, type, limit) => `/transactions/since/${transaction}/type/${type}/limit/${limit}`;
+			const duration = 'Since';
+			const transformer = (info) => info;
+			const resultType = routeResultTypes.transaction;
+			return getTransactionsByType(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+		});
+
+		// TODO(ahuszagh) Debug method. Remove later.
+		server.get('/transactions/from/:transaction/type/:type/limit/:limit/hash', (req, res, next) => {
+			const collectionName = 'transactions';
+			const redirectUrl = (transaction, type, limit) => `/transactions/from/${transaction}/type/${type}/limit/${limit}/hash`;
+			const duration = 'From';
+			const transformer = (info) => { return { hash: info.meta.hash }; };
+			const resultType = routeResultTypes.transactionHash;
+			return getTransactionsByType(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+		});
+
+		// TODO(ahuszagh) Debug method. Remove later.
+		server.get('/transactions/since/:transaction/type/:type/limit/:limit/hash', (req, res, next) => {
+			const collectionName = 'transactions';
+			const redirectUrl = (transaction, type, limit) => `/transactions/since/${transaction}/type/${type}/limit/${limit}/hash`;
+			const duration = 'Since';
+			const transformer = (info) => { return { hash: info.meta.hash }; };
+			const resultType = routeResultTypes.transactionHash;
+			return getTransactionsByType(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+		});
 
 		// CURSORS -- UNCONFIRMED TRANSACTIONS
 
@@ -166,7 +258,7 @@ module.exports = {
 		//  - A transaction ID.
 		server.get('/transactions/unconfirmed/from/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'unconfirmedTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/unconfirmed/from/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/unconfirmed/from/${transaction}/limit/${limit}`;
 			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -181,7 +273,7 @@ module.exports = {
 		//  - A transaction ID.
 		server.get('/transactions/unconfirmed/since/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'unconfirmedTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/unconfirmed/since/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/unconfirmed/since/${transaction}/limit/${limit}`;
 			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -191,7 +283,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/unconfirmed/from/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'unconfirmedTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/unconfirmed/from/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/unconfirmed/from/${transaction}/limit/${limit}/hash`;
 			const duration = 'From';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;
@@ -201,7 +293,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/unconfirmed/since/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'unconfirmedTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/unconfirmed/since/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/unconfirmed/since/${transaction}/limit/${limit}/hash`;
 			const duration = 'Since';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;
@@ -218,7 +310,7 @@ module.exports = {
 		//  - A transaction ID.
 		server.get('/transactions/partial/from/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'partialTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/partial/from/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/partial/from/${transaction}/limit/${limit}`;
 			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -233,7 +325,7 @@ module.exports = {
 		//  - A transaction ID.
 		server.get('/transactions/partial/since/:transaction/limit/:limit', (req, res, next) => {
 			const collectionName = 'partialTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/partial/since/${transaction}/limit/${pageSize}`;
+			const redirectUrl = (transaction, limit) => `/transactions/partial/since/${transaction}/limit/${limit}`;
 			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.transaction;
@@ -243,7 +335,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/partial/from/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'partialTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/partial/from/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/partial/from/${transaction}/limit/${limit}/hash`;
 			const duration = 'From';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;
@@ -253,7 +345,7 @@ module.exports = {
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/transactions/partial/since/:transaction/limit/:limit/hash', (req, res, next) => {
 			const collectionName = 'partialTransactions';
-			const redirectUrl = (transaction, pageSize) => `/transactions/partial/since/${transaction}/limit/${pageSize}/hash`;
+			const redirectUrl = (transaction, limit) => `/transactions/partial/since/${transaction}/limit/${limit}/hash`;
 			const duration = 'Since';
 			const transformer = (info) => { return { hash: info.meta.hash }; };
 			const resultType = routeResultTypes.transactionHash;

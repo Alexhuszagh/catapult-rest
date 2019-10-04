@@ -41,7 +41,7 @@ const getMosaics = (req, res, next, db, collectionName, countRange, redirectUrl,
   const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
 
 	if (!limit) {
-		return res.redirect(redirectUrl(transaction, countRange.preset), next);
+		return res.redirect(redirectUrl(mosaic, countRange.preset), next);
 	}
 
 	let dbMethod;
@@ -52,15 +52,16 @@ const getMosaics = (req, res, next, db, collectionName, countRange, redirectUrl,
 	} else if (routeUtils.validateValue(mosaic, 'latest')) {
     dbArgs = [collectionName, limit];
     dbMethod = 'mosaics' + duration + 'Latest';
-	} else if (routeUtils.validateValue(namespace, 'mosaicId')) {
-    const id = routeUtils.parseValue(namespace, 'mosaicId');
+	} else if (routeUtils.validateValue(mosaic, 'mosaicId')) {
+    const id = routeUtils.parseValue(mosaic, 'mosaicId');
     dbMethod = 'mosaics' + duration + 'Id';
     dbArgs = [collectionName, id, limit];
   } else {
-		throw new Error(`invalid length of mosaic id '${mosaic}'`)
+    res.send(errors.createInvalidArgumentError('mosaicId has an invalid format'));
+    return next();
 	}
 
-  routeUtils.queryAndSendDurationCollection(res, next, db, dbMethod, dbArgs, transformer, resultType);
+  routeUtils.queryAndSendDurationCollection(res, next, mosaic, db, dbMethod, dbArgs, transformer, resultType);
 }
 
 module.exports = {
@@ -106,7 +107,7 @@ module.exports = {
     //  - A mosaic ID.
     server.get('/mosaics/from/:mosaic/limit/:limit', (req, res, next) => {
       const collectionName = 'mosaics';
-      const redirectUrl = (mosaic, pageSize) => `/mosaics/from/${mosaic}/limit/${pageSize}`;
+      const redirectUrl = (mosaic, limit) => `/mosaics/from/${mosaic}/limit/${limit}`;
       const duration = 'From';
       const transformer = (info) => info;
       const resultType = 'mosaicDescriptor';
@@ -120,7 +121,7 @@ module.exports = {
     //  - A mosaic ID.
     server.get('/mosaics/since/:mosaic/limit/:limit', (req, res, next) => {
       const collectionName = 'mosaics';
-      const redirectUrl = (mosaic, pageSize) => `/mosaics/since/${mosaic}/limit/${pageSize}`;
+      const redirectUrl = (mosaic, limit) => `/mosaics/since/${mosaic}/limit/${limit}`;
       const duration = 'Since';
       const transformer = (info) => info;
       const resultType = 'mosaicDescriptor';
@@ -130,7 +131,7 @@ module.exports = {
     // TODO(ahuszagh) Debug method. Remove later.
     server.get('/mosaics/from/:mosaic/limit/:limit/id', (req, res, next) => {
       const collectionName = 'mosaics';
-      const redirectUrl = (mosaic, pageSize) => `/mosaics/from/${mosaic}/limit/${pageSize}/id`;
+      const redirectUrl = (mosaic, limit) => `/mosaics/from/${mosaic}/limit/${limit}/id`;
       const duration = 'From';
       const transformer = (info) => { return { id: info.mosaic.id }; };
       const resultType = 'mosaicId';
@@ -140,7 +141,7 @@ module.exports = {
     // TODO(ahuszagh) Debug method. Remove later.
     server.get('/mosaics/since/:mosaic/limit/:limit/id', (req, res, next) => {
       const collectionName = 'mosaics';
-      const redirectUrl = (mosaic, pageSize) => `/mosaics/since/${mosaic}/limit/${pageSize}/id`;
+      const redirectUrl = (mosaic, limit) => `/mosaics/since/${mosaic}/limit/${limit}/id`;
       const duration = 'Since';
       const transformer = (info) => { return { id: info.mosaic.id }; };
       const resultType = 'mosaicId';

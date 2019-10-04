@@ -124,6 +124,13 @@ const namedParserMap = {
 			return convert.hexToUint8(str);
 
 		throw Error(`invalid length of hash512 '${str.length}'`);
+	},
+	transactionType: str => {
+		const type = catapult.model.EntityType[str];
+		if (undefined === type)
+			throw Error('unrecognized transaction type');
+
+		return type;
 	}
 };
 
@@ -340,18 +347,25 @@ const routeUtils = {
 	 * Query and send duration collection to network.
 	 * @param {object} res Restify response object.
 	 * @param {Function} next Restify next callback handler.
+	 * @param {object} id Identifier for query for error handling.
 	 * @param {object} db Catapult or plugin database utility.
 	 * @param {string} dbMethod Name of database method to call.
 	 * @param {array} dbArgs Arguments to database method.
 	 * @param {Function} transformer Callback to transform returned data prior to sending.
 	 * @param {string} resultType Response data type.
 	 */
-	queryAndSendDurationCollection: (res, next, db, dbMethod, dbArgs, transformer, resultType) => {
-		db[dbMethod](...dbArgs).then(data => {
-	    const transformed = data.map(transformer);
-	    res.send({ payload: transformed, type: resultType });
-	    next();
-	  });
+	queryAndSendDurationCollection: (res, next, id, db, dbMethod, dbArgs, transformer, resultType) => {
+		db[dbMethod](...dbArgs)
+			.then(data => {
+				if (data === undefined) {
+					res.send(errors.createNotFoundError(id));
+					return next();
+				}
+
+	    	const transformed = data.map(transformer);
+	    	res.send({ payload: transformed, type: resultType });
+	    	next();
+	  	});
 	},
 
 	/**
