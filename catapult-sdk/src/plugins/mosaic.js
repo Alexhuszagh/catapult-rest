@@ -58,7 +58,7 @@ const mosaicPlugin = {
 
 		// TODO(ahuszagh) Remove: For debugging only.
 		builder.addSchema('mosaicId', {
-			id: ModelType.objectId,
+			id: ModelType.uint64HexIdentifier,
 		});
 	},
 
