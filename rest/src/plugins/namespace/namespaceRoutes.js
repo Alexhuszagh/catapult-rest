@@ -37,17 +37,17 @@ const { uint64 } = catapult.utils;
 //	next - Control flow callback.
 //	db - Database utility.
 //	collectionName - Name of the collection to query.
-// 	pageSizes - Array of valid page sizes.
+//  countRange - Range of valid query counts.
 // 	redirectUrl - Callback to get redirect URL.
 //  duration - 'From' or 'Since'.
 //  transformer - Callback to transform each element.
 //  resultType - Data result type (for formatting).
-const getNamespaces = (req, res, next, db, collectionName, pageSizes, redirectUrl, duration, transformer, resultType) => {
+const getNamespaces = (req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType) => {
 	const namespace = req.params.namespace;
-	const limit = routeUtils.parseEnumeratedArgument(req.params, 'limit', pageSizes, 'uint');
+  const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
 
 	if (!limit) {
-		return res.redirect(redirectUrl(transaction, pageSizes[0]), next);
+		return res.redirect(redirectUrl(transaction, countRange.preset), next);
 	}
 
   let dbMethod;
@@ -75,7 +75,7 @@ const getNamespaces = (req, res, next, db, collectionName, pageSizes, redirectUr
 
 module.exports = {
 	register: (server, db, services) => {
-		const validPageSizes = routeUtils.generateValidPageSizes(services.config.pageSize); // throws if there is not at least one valid page size
+    const countRange = services.config.countRange;
 		const namespaceSender = routeUtils.createSender('namespaceDescriptor');
 
 		server.get('/namespace/:namespaceId', (req, res, next) => {
@@ -191,7 +191,7 @@ module.exports = {
       const duration = 'From';
       const transformer = (info) => info;
 			const resultType = 'namespaceDescriptor';
-      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+      return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 
     // Gets namespace since the identifier (non-inclusive).
@@ -205,7 +205,7 @@ module.exports = {
       const duration = 'Since';
       const transformer = (info) => info;
 			const resultType = 'namespaceDescriptor';
-      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+      return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 
     // TODO(ahuszagh) Debug method. Remove later.
@@ -215,7 +215,7 @@ module.exports = {
       const duration = 'From';
       const transformer = (info) => { return { id: info.meta.id }; };
 			const resultType = 'namespaceId';
-      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+      return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 
     // TODO(ahuszagh) Debug method. Remove later.
@@ -225,7 +225,7 @@ module.exports = {
       const duration = 'Since';
       const transformer = (info) => { return { id: info.meta.id }; };
 			const resultType = 'namespaceId';
-      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+      return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 	}
 };

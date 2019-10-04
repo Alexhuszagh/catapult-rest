@@ -50,8 +50,9 @@ const namedValidatorMap = {
 	hash256: str => constants.sizes.hexHash256 === str.length,
 	hash512: str => constants.sizes.hexHash512 === str.length,
 	earliest: str => str === 'earliest' || str === 'min',
-	latest: str => str === 'latest' || str === 'max'
-	// TODO(ahuszagh) Add other validators here, like richest, latest.
+	latest: str => str === 'latest' || str === 'max',
+	least: str => str === 'least' || str === 'min',
+	most: str => str === 'most' || str === 'max'
 };
 
 const namedParserMap = {
@@ -81,7 +82,7 @@ const namedParserMap = {
 		return result;
 	},
 	// Parse a unsigned integer or a time modifier.
-	uintOrTimemod: str => {
+	uintOrTime: str => {
 		if (namedValidatorMap.earliest(str))
 			return 0;
 		if (namedValidatorMap.latest(str))
@@ -92,7 +93,6 @@ const namedParserMap = {
 
 		return result;
 	},
-	// TODO(ahuszagh) Add other uint_or_x types here.
 	address: str => {
 		if (namedValidatorMap.address(str))
 			return address.stringToAddress(str);
@@ -144,16 +144,32 @@ const routeUtils = {
 	},
 
 	/**
-	 * Parses an argument and throws an invalid argument error if it is invalid.
+	 * Parses an enumerated argument and throws an invalid argument error if it is invalid.
 	 * @param {object} args Container containing the argument to parse.
 	 * @param {string} key Name of the argument to parse.
-	 * @param {array} Array of valid parsed values.
+	 * @param {array} validValues Array of valid parsed values.
 	 * @param {Function|string} parser Parser to use or the name of a named parser.
 	 * @returns {object} Parsed value.
 	 */
 	parseEnumeratedArgument(args, key, validValues, parser) {
 		try {
 			return this.parseEnumeratedValue(args[key], validValues, parser);
+		} catch (err) {
+			throw errors.createInvalidArgumentError(`${key} has an invalid format`, err);
+		}
+	},
+
+	/**
+	 * Parses a range argument and throws an invalid argument error if it is invalid.
+	 * @param {object} args Container containing the argument to parse.
+	 * @param {string} key Name of the argument to parse.
+	 * @param {object} range Range of valid values.
+	 * @param {Function|string} parser Parser to use or the name of a named parser.
+	 * @returns {object} Parsed value.
+	 */
+	parseRangeArgument(args, key, range, parser) {
+		try {
+			return this.parseRangeValue(args[key], range, parser);
 		} catch (err) {
 			throw errors.createInvalidArgumentError(`${key} has an invalid format`, err);
 		}
@@ -172,13 +188,29 @@ const routeUtils = {
 	/**
 	 * Parses a value with valid enumerated values.
 	 * @param {any} str Value to parse.
-	 * @param {array} Array of valid parsed values.
+	 * @param {array} validValues Array of valid parsed values.
 	 * @param {Function|string} parser Parser to use or the name of a named parser.
 	 * @returns {object} Parsed value or undefined.
 	 */
 	parseEnumeratedValue(str, validValues, parser) {
 		const value = this.parseValue(str, parser);
 		return -1 === validValues.indexOf(value) ? undefined : value;
+	},
+
+	/**
+	 * Parses a value with valid, acceptable range values.
+	 * @param {any} str Value to parse.
+	 * @param {object} range Range of valid values.
+	 * @param {Function|string} parser Parser to use or the name of a named parser.
+	 * @returns {object} Parsed value or undefined.
+	 */
+	parseRangeValue(str, range, parser) {
+		const value = this.parseValue(str, parser);
+		if (value < range.min)
+			return undefined;
+		if (value > range.max)
+			return undefined;
+		return value;
 	},
 
 	/**

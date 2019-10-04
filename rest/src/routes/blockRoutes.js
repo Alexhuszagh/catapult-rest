@@ -32,17 +32,17 @@ const alignDown = (height, alignment) => (Math.floor((height - 1) / alignment) *
 //	next - Control flow callback.
 //	db - Database utility.
 //	collectionName - Name of the collection to query.
-// 	pageSizes - Array of valid page sizes.
+// 	countRange - Range of valid query counts.
 // 	redirectUrl - Callback to get redirect URL.
 //  duration - 'From' or 'Since'.
 //  transformer - Callback to transform each element.
 //  resultType - Data result type (for formatting).
-const getBlocks = (req, res, next, db, collectionName, pageSizes, redirectUrl, duration, transformer, resultType) => {
-	const height = routeUtils.parseArgument(req.params, 'height', 'uintOrTimemod');
-	const limit = routeUtils.parseEnumeratedArgument(req.params, 'limit', pageSizes, 'uint');
+const getBlocks = (req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType) => {
+	const height = routeUtils.parseArgument(req.params, 'height', 'uintOrTime');
+	const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
 
 	if (!limit) {
-		return res.redirect(redirectUrl(req.params.height, pageSizes[0]), next);
+		return res.redirect(redirectUrl(req.params.height, countRange.preset), next);
 	}
 
 	const dbMethod = 'blocks' + duration + 'Height';
@@ -52,7 +52,8 @@ const getBlocks = (req, res, next, db, collectionName, pageSizes, redirectUrl, d
 
 module.exports = {
 	register: (server, db, { config }) => {
-		const validPageSizes = routeUtils.generateValidPageSizes(config.pageSize); // throws if there is not at least one valid page size
+		const validPageSizes = routeUtils.generateValidPageSizes(config.pageSize);
+		const countRange = config.countRange;
 
 		server.get('/block/:height', (req, res, next) => {
 			const height = routeUtils.parseArgument(req.params, 'height', 'uint');
@@ -112,7 +113,7 @@ module.exports = {
 			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
-			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
 		});
 
 		// Gets blocks starting from the height (non-inclusive).
@@ -126,7 +127,7 @@ module.exports = {
 			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
-			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
@@ -136,7 +137,7 @@ module.exports = {
 			const duration = 'From';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;
-			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
@@ -146,7 +147,7 @@ module.exports = {
 			const duration = 'Since';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;
-			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
 		});
 	}
 };
