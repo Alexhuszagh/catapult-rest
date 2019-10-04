@@ -118,6 +118,11 @@ const namespacePlugin = {
 			address: ModelType.binary,
 			names: { type: ModelType.array, schemaName: ModelType.string }
 		});
+
+		// TODO(ahuszagh) Remove: For debugging only.
+		builder.addSchema('namespaceId', {
+			id: ModelType.objectId,
+		});
 	},
 
 	registerCodecs: codecBuilder => {

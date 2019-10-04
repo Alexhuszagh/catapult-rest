@@ -19,9 +19,10 @@
  */
 
 const AccountType = require('../AccountType');
+const { convertToLong } = require('../../db/dbUtils');
 const MongoDb = require('mongodb');
 
-const { Long } = MongoDb;
+const { Long, ObjectId } = MongoDb;
 
 class MosaicDb {
 	/**
@@ -32,7 +33,124 @@ class MosaicDb {
 		this.catapultDb = db;
 	}
 
+	// Internal method to find sorted mosaics from query.
+	sortedMosaics(collectionName, condition, count) {
+		const projection = {};
+		// Sort by descending startHeight, then by descending ID.
+		// Don't sort solely on ID, since it will break if 32-bit time wraps.
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const sorting = { 'mosaic.startHeight': -1, _id: -1 };
+		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
+			.then(this.catapultDb.sanitizer.deleteIds);
+	}
+
+	// Internal method to get mosaics up to (non-inclusive) the block height
+	// and the mosaic ID, returning at max `numMosaics` items.
+	mosaicsFromHeightAndId(collectionName, height, id, numMosaics) {
+		if (0 === numMosaics)
+			return Promise.resolve([]);
+
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const condition = { $or: [
+			{ 'mosaic.startHeight': { $eq: height }, _id: { $lt: id } },
+			{ 'mosaic.startHeight': { $lt: height } }
+		]};
+
+		return this.sortedMosaics(collectionName, condition, numMosaics)
+			.then(mosaics => Promise.resolve(mosaics));
+	}
+
+	// Internal method to get mosaics since (non-inclusive) the block height
+	// and the mosaic ID, returning at max `numMosaics` items.
+	mosaicsSinceHeightAndId(collectionName, height, id, numMosaics) {
+		if (0 === numMosaics)
+			return Promise.resolve([]);
+
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const condition = { $or: [
+			{ 'mosaic.startHeight': { $eq: height }, _id: { $gt: id } },
+			{ 'mosaic.startHeight': { $gt: height } }
+		]};
+
+		return this.sortedMosaics(collectionName, condition, numMosaics)
+			.then(mosaics => Promise.resolve(mosaics));
+	}
+
 	// region mosaic retrieval
+
+  // Dummy method, to provide all mosaics from (not-including) the earliest.
+  // Always empty.
+  mosaicsFromEarliest(collectionName, numMosaics) {
+    return Promise.resolve([]);
+  }
+
+  // Get the earliest N mosaics since (and including) the earliest mosaic.
+  mosaicsSinceEarliest(collectionName, numMosaics) {
+    if (0 === numMosaics)
+	    return Promise.resolve([]);
+
+    const height = convertToLong(0);
+		const id = new ObjectId('000000000000000000000000');
+    return this.mosaicsSinceHeightAndId(collectionName, height, id, numMosaics);
+  }
+
+  // Get the latest N mosaics from (and including) the latest mosaic.
+  mosaicsFromLatest(collectionName, numMosaics) {
+    if (0 === numMosaics)
+      return Promise.resolve([]);
+
+    return this.catapultDb.chainStatisticCurrent().then(chainStatistic => {
+      const one = convertToLong(1);
+      const height = chainStatistic.height.add(one);
+			const id = new ObjectId('000000000000000000000000');
+      return this.mosaicsFromHeightAndId(collectionName, height, id, numMosaics);
+    });
+  }
+
+  // Dummy method, to provide all mosaics since (not-including) the latest.
+  // Always empty.
+  mosaicsSinceLatest(collectionName, numMosaics) {
+    return Promise.resolve([]);
+  }
+
+  // Get mosaics up to (non-inclusive) a mosaic object.
+  mosaicsFromMosaic(collectionName, mosaic, numMosaics) {
+    const height = mosaic.mosaic.startHeight;
+    const id = mosaic.meta.id;
+    return this.mosaicsFromHeightAndId(collectionName, height, index, numMosaics);
+  }
+
+  // Get mosaics since (non-inclusive) a mosaic object.
+  mosaicsSinceMosaic(collectionName, mosaic, numMosaics) {
+    const height = mosaic.mosaic.startHeight;
+    const id = mosaic.meta.id;
+    return this.mosaicsSinceHeightAndId(collectionName, height, index, numMosaics);
+  }
+
+  // Get mosaics up to (non-inclusive) the mosaic at id.
+  mosaicsFromId(collectionName, id, numMosaics) {
+    return this.mosaicById(collectionName, id).then(mosaic => {
+      return this.mosaicsFromMosaic(collectionName, mosaic, numMosaics);
+    });
+  }
+
+  // Get mosaics since (non-inclusive) the mosaic at id.
+  mosaicsSinceId(collectionName, id, numMosaics) {
+    return this.mosaicById(collectionName, id).then(mosaic => {
+      return this.mosaicsSinceMosaic(collectionName, mosaic, numMosaics);
+    });
+  }
+
+  // Retrieve mosaic by ID.
+  mosaicById(collectionName, id) {
+		const mosaicId = new Long(id[0], id[1]);
+		const condition = { 'mosaic.id': { $eq: mosaicId } };
+		return this.catapultDb.queryDocument(collectionName, condition)
+			.then(this.catapultDb.sanitizer.deleteId);
+  }
 
 	/**
 	 * Retrieves mosaics.

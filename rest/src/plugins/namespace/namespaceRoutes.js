@@ -31,58 +31,46 @@ const { Binary } = MongoDb;
 const { convertToLong } = dbUtils;
 const { uint64 } = catapult.utils;
 
-const getLimit = (validLimits, params) => {
-	const limit = routeUtils.parseArgument(params, 'limit', 'uint');
-	return -1 === validLimits.indexOf(limit) ? undefined : limit;
-};
-
-// Parse object ID from string.
-const parseObjectId = str => {
-	if (!convert.isHexString(str))
-		throw Error('must be 12-byte hex string');
-
-	return str;
-};
-
-// Implied method to get namespacess from or since identifier.
+// Implied method to get namespaces from or since identifier.
 //	req - Request data.
 // 	res - Response data.
 //	next - Control flow callback.
+//	db - Database utility.
+//	collectionName - Name of the collection to query.
 // 	pageSizes - Array of valid page sizes.
 // 	redirectUrl - Callback to get redirect URL.
-//  direction - 'From' or 'Since'.
+//  duration - 'From' or 'Since'.
 //  transformer - Callback to transform each element.
-const getNamespaces = (req, res, next, db, pageSizes, redirectUrl, direction, transformer) => {
+//  resultType - Data result type (for formatting).
+const getNamespaces = (req, res, next, db, collectionName, pageSizes, redirectUrl, duration, transformer, resultType) => {
 	const namespace = req.params.namespace;
-	const limit = getLimit(pageSizes, req.params);
-	const collectionName = 'namespaces';
+	const limit = routeUtils.parseEnumeratedArgument(req.params, 'limit', pageSizes, 'uint');
 
 	if (!limit) {
 		return res.redirect(redirectUrl(transaction, pageSizes[0]), next);
 	}
 
-	if ('earliest' === namespace) {
-		db['namespaces' + direction + 'Earliest'](collectionName, limit).then(namespaces => {
-			const data = namespaces.map(transformer);
-			res.send({ payload: data });
-			next();
-		});
-	} else if ('latest' === namespace) {
-		db['namespaces' + direction + 'Latest'](collectionName, limit).then(namespaces => {
-			const data = namespaces.map(transformer);
-			res.send({ payload: data });
-			next();
-		});
-	} else if (constants.sizes.objectId === namespace.length) {
-		const id = parseObjectId(namespace);
-		db['namespaces' + direction + 'Id'](collectionName, id, limit).then(namespaces => {
-			const data = namespaces.map(transformer);
-			res.send({ payload: data });
-			next();
-		});
+  let dbMethod;
+  let dbArgs;
+	if (routeUtils.validateValue(namespace, 'earliest')) {
+    dbMethod = 'namespaces' + duration + 'Earliest';
+    dbArgs = [collectionName, limit];
+	} else if (routeUtils.validateValue(namespace, 'latest')) {
+    dbMethod = 'namespaces' + duration + 'Latest';
+    dbArgs = [collectionName, limit];
+	} else if (routeUtils.validateValue(namespace, 'namespaceId')) {
+    const id = routeUtils.parseValue(namespace, 'namespaceId');
+    dbMethod = 'namespaces' + duration + 'Id';
+    dbArgs = [collectionName, id, limit];
+  } else if (routeUtils.validateValue(namespace, 'objectId')) {
+    const id = routeUtils.parseValue(namespace, 'objectId');
+    dbMethod = 'namespaces' + duration + 'ObjectId';
+    dbArgs = [collectionName, id, limit];
 	} else {
-		throw new Error(`invalid length of namespace id '${transaction}'`)
+		throw new Error(`invalid namespace identifier '${namespace}'`)
 	}
+
+  routeUtils.queryAndSendDurationCollection(res, next, db, dbMethod, dbArgs, transformer, resultType);
 }
 
 module.exports = {
@@ -92,7 +80,7 @@ module.exports = {
 
 		server.get('/namespace/:namespaceId', (req, res, next) => {
 			const namespaceId = routeUtils.parseArgument(req.params, 'namespaceId', uint64.fromHex);
-			return db.namespaceById(namespaceId)
+			return db.namespaceById('namespaces', namespaceId)
 				.then(namespaceSender.sendOne(req.params.namespaceId, res, next));
 		});
 
@@ -198,10 +186,12 @@ module.exports = {
     //  - earliest (returning from the earliest namespace, IE, nothing).
     //  - A namespace ID.
     server.get('/namespaces/from/:namespace/limit/:limit', (req, res, next) => {
-        const redirectUrl = (namespace, pageSize) => `/namespaces/from/${namespace}/limit/${pageSize}`;
-        const direction = 'From';
-        const transformer = (info) => info;
-        return getNamespaces(req, res, next, db, validPageSizes, redirectUrl, direction, transformer);
+			const collectionName = 'namespaces';
+      const redirectUrl = (namespace, pageSize) => `/namespaces/from/${namespace}/limit/${pageSize}`;
+      const duration = 'From';
+      const transformer = (info) => info;
+			const resultType = 'namespaceDescriptor';
+      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
     });
 
     // Gets namespace since the identifier (non-inclusive).
@@ -210,26 +200,32 @@ module.exports = {
     //  - earliest (returning since the earliest namespace).
     //  - A namespace ID.
     server.get('/namespaces/since/:namespace/limit/:limit', (req, res, next) => {
-        const redirectUrl = (namespace, pageSize) => `/namespaces/since/${namespace}/limit/${pageSize}`;
-        const direction = 'Since';
-        const transformer = (info) => info;
-        return getNamespaces(req, res, next, db, validPageSizes, redirectUrl, direction, transformer);
+			const collectionName = 'namespaces';
+      const redirectUrl = (namespace, pageSize) => `/namespaces/since/${namespace}/limit/${pageSize}`;
+      const duration = 'Since';
+      const transformer = (info) => info;
+			const resultType = 'namespaceDescriptor';
+      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
     });
 
     // TODO(ahuszagh) Debug method. Remove later.
-    server.get('/namespaces/from/:namespace/limit/:limit/id', (req, res, next) => {
-        const redirectUrl = (namespace, pageSize) => `/namespaces/from/${namespace}/limit/${pageSize}/id`;
-        const direction = 'From';
-        const transformer = (info) => { return { id: info.meta.id }; };
-        return getNamespaces(req, res, next, db, validPageSizes, redirectUrl, direction, transformer);
+	  server.get('/namespaces/from/:namespace/limit/:limit/id', (req, res, next) => {
+			const collectionName = 'namespaces';
+      const redirectUrl = (namespace, pageSize) => `/namespaces/from/${namespace}/limit/${pageSize}/id`;
+      const duration = 'From';
+      const transformer = (info) => { return { id: info.meta.id }; };
+			const resultType = 'namespaceId';
+      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
     });
 
     // TODO(ahuszagh) Debug method. Remove later.
     server.get('/namespaces/since/:namespace/limit/:limit/id', (req, res, next) => {
-        const redirectUrl = (namespace, pageSize) => `/namespaces/since/${namespace}/limit/${pageSize}/id`;
-        const direction = 'Since';
-        const transformer = (info) => { return { id: info.meta.id }; };
-        return getNamespaces(req, res, next, db, validPageSizes, redirectUrl, direction, transformer);
+			const collectionName = 'namespaces';
+      const redirectUrl = (namespace, pageSize) => `/namespaces/since/${namespace}/limit/${pageSize}/id`;
+      const duration = 'Since';
+      const transformer = (info) => { return { id: info.meta.id }; };
+			const resultType = 'namespaceId';
+      return getNamespaces(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
     });
 	}
 };

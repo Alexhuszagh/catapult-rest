@@ -55,6 +55,11 @@ const mosaicPlugin = {
 			ownerAddress: ModelType.binary,
 			duration: ModelType.uint64
 		});
+
+		// TODO(ahuszagh) Remove: For debugging only.
+		builder.addSchema('mosaicId', {
+			id: ModelType.objectId,
+		});
 	},
 
 	registerCodecs: codecBuilder => {

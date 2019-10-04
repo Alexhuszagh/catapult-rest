@@ -23,7 +23,7 @@ const AccountType = require('../AccountType');
 const catapult = require('catapult-sdk');
 const MongoDb = require('mongodb');
 
-const { Long } = MongoDb;
+const { Long, ObjectId } = MongoDb;
 
 const createActiveConditions = () => {
 	const conditions = { $and: [{ 'meta.active': true }] };
@@ -42,12 +42,11 @@ class NamespaceDb {
 	// Internal method to find sorted namespaces from query.
 	sortedNamespaces(collectionName, condition, count) {
 		const projection = {};
-		// Sort by descending startHeight, then by ascending ID.
-		// ID is solely so we get a stable sort, since we can't actually
-		// find the order in which it was actually declared.
+		// Sort by descending startHeight, then by descending ID.
+		// Don't sort solely on ID, since it will break if 32-bit time wraps.
 		// TODO(ahuszagh)
 		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const sorting = { 'namespace.startHeight': -1, _id: 1 };
+		const sorting = { 'namespace.startHeight': -1, _id: -1 };
 		return this.catapultDb.sortedCollection(collectionName, condition, projection, sorting, count)
 			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
 	}
@@ -100,7 +99,7 @@ class NamespaceDb {
 			return Promise.resolve([]);
 
 		const height = convertToLong(0);
-		const id = convertToLong(0);
+		const id = new ObjectId('000000000000000000000000');
 		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
 	}
 
@@ -112,7 +111,7 @@ class NamespaceDb {
 		return this.catapultDb.chainStatisticCurrent().then(chainStatistic => {
 			const one = convertToLong(1);
 			const height = chainStatistic.height.add(one);
-			const id = convertToLong(0);
+			const id = new ObjectId('000000000000000000000000');
 			return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
 		});
 	}
@@ -127,28 +126,49 @@ class NamespaceDb {
 	namespacesFromNamespace(collectionName, namespace, numNamespaces) {
 		const height = namespace.namespace.startHeight;
 		const id = namespace.meta.id;
-		return this.namespacesFromHeightAndId(collectionName, height, index, numNamespaces);
+		return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
 	}
 
 	// Get namespaces since (non-inclusive) a namespace object.
 	namespacesSinceNamespace(collectionName, namespace, numNamespaces) {
 		const height = namespace.namespace.startHeight;
 		const id = namespace.meta.id;
-		return this.namespacesSinceHeightAndId(collectionName, height, index, numNamespaces);
+		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
 	}
 
 	// Get namespaces up to (non-inclusive) the namespace at id.
 	namespacesFromId(collectionName, id, numNamespaces) {
-		return this.namespaceById(id).then(namespace => {
+		return this.namespaceById(collectionName, id).then(namespace => {
 			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
 		});
 	}
 
 	// Get namespaces since (non-inclusive) the namespace at id.
 	namespacesSinceId(collectionName, id, numNamespaces) {
-		return this.namespaceById(id).then(namespace => {
-			return this.transactionsSinceNamespace(collectionName, namespaces[0], numNamespaces);
+		return this.namespaceById(collectionName, id).then(namespace => {
+			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
 		});
+	}
+
+	// Get namespaces up to (non-inclusive) the namespace at object id.
+	namespacesFromObjectId(collectionName, id, numNamespaces) {
+		return this.namespaceByObjectId(collectionName, id).then(namespace => {
+			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
+		});
+	}
+
+	// Get namespaces since (non-inclusive) the namespace at object id.
+	namespacesSinceObjectId(collectionName, id, numNamespaces) {
+		return this.namespaceByObjectId(collectionName, id).then(namespace => {
+			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
+		});
+	}
+
+	// Retrieve namespace by object ID.
+	namespaceByObjectId(collectionName, id) {
+		const condition = { _id: { $eq: id } };
+		return this.catapultDb.queryDocument(collectionName, condition)
+			.then(this.catapultDb.sanitizer.copyAndDeleteId);
 	}
 
 	/**
@@ -156,7 +176,7 @@ class NamespaceDb {
 	 * @param {module:catapult.utils/uint64~uint64} id Namespace id.
 	 * @returns {Promise.<object>} Namespace.
 	 */
-	namespaceById(id) {
+	namespaceById(collectionName, id) {
 		const namespaceId = new Long(id[0], id[1]);
 		const conditions = { $or: [] };
 
@@ -168,7 +188,7 @@ class NamespaceDb {
 			conditions.$or.push(conjunction);
 		}
 
-		return this.catapultDb.queryDocument('namespaces', conditions)
+		return this.catapultDb.queryDocument(collectionName, conditions)
 			.then(this.catapultDb.sanitizer.copyAndDeleteId);
 	}
 

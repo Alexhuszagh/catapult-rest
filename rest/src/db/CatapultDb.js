@@ -231,7 +231,7 @@ class CatapultDb {
 		const projection = { 'meta.addresses': 0 };
 		const sorting = { 'meta.height': -1, 'meta.index': -1 };
 		return this.sortedCollection(collectionName, condition, projection, sorting, count)
-			.then(this.sanitizer.deleteIds)
+			.then(this.sanitizer.copyAndDeleteIds)
 	}
 
 	// Internal method to get transactions up to (non-inclusive) the block height
@@ -317,43 +317,46 @@ class CatapultDb {
 		return this.transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions);
 	}
 
+	// Retrieve transaction by hash.
+  transactionByHash(collectionName, hash) {
+		const condition = { 'meta.hash': { $eq: Buffer.from(hash) } };
+		return this.queryDocument(collectionName, condition)
+			.then(this.sanitizer.copyAndDeleteId);
+  }
+
 	// Get transactions up to (non-inclusive) the transaction at hash.
 	transactionsFromHash(collectionName, hash, numTransactions) {
-		return this.transactionsByHashes([hash]).then(transactions => {
-			if (transactions.length !== 1) {
-				throw new Error(`invalid transaction hash ${hash}`)
-			}
-			return this.transactionsFromTransaction(collectionName, transactions[0], numTransactions);
+		return this.transactionByHash(collectionName, hash).then(transaction => {
+			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
 	// Get transactions since (non-inclusive) the transaction at hash.
 	transactionsSinceHash(collectionName, hash, numTransactions) {
-		return this.transactionsByHashes([hash]).then(transactions => {
-			if (transactions.length !== 1) {
-				throw new Error(`invalid transaction hash ${hash}`)
-			}
-			return this.transactionsSinceTransaction(collectionName, transactions[0], numTransactions);
+		return this.transactionByHash(collectionName, hash).then(transaction => {
+			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
+	// Retrieve transaction by ID.
+  transactionById(collectionName, id) {
+		const transactionId = new ObjectId(id);
+		const condition = { _id: { $eq: transactionId } };
+		return this.queryDocument(collectionName, condition)
+			.then(this.sanitizer.copyAndDeleteId);
+  }
+
 	// Get transactions up to (non-inclusive) the transaction at id.
 	transactionsFromId(collectionName, id, numTransactions) {
-		return this.transactionsByIds([id]).then(transactions => {
-			if (transactions.length !== 1) {
-				throw new Error(`invalid transaction id ${id}`)
-			}
-			return this.transactionsFromTransaction(collectionName, transactions[0], numTransactions);
+		return this.transactionById(collectionName, id).then(transaction => {
+			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
 	// Get transactions since (non-inclusive) the transaction at id.
 	transactionsSinceId(collectionName, id, numTransactions) {
-		return this.transactionsByIds([id]).then(transactions => {
-			if (transactions.length !== 1) {
-				throw new Error(`invalid transaction id ${id}`)
-			}
-			return this.transactionsSinceTransaction(collectionName, transactions[0], numTransactions);
+		return this.transactionById(collectionName, id).then(transaction => {
+			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
@@ -403,28 +406,28 @@ class CatapultDb {
 	// Updated version of blocksFrom.
 	// Gets blocks up to (non-inclusive) the height provided,
 	// returning at max `numBlocks` items.
-	blocksFromHeight(height, numBlocks) {
+	blocksFromHeight(collectionName, height, numBlocks) {
 		if (0 === numBlocks)
 			return Promise.resolve([]);
 
 		return this.chainStatisticCurrent().then(chainStatistic => {
 			const { startHeight, endHeight } = calculateFromHeight(convertToLong(height), chainStatistic.height, numBlocks);
 			const condition = { 'block.height': { $gte: startHeight, $lt: endHeight } };
-			return this.sortedBlocks('blocks', condition, numBlocks)
+			return this.sortedBlocks(collectionName, condition, numBlocks)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}
 
 	// Gets blocks starting from (non-inclusive) the height provided,
 	// returning at max `numBlocks` items.
-	blocksSinceHeight(height, numBlocks) {
+	blocksSinceHeight(collectionName, height, numBlocks) {
 		if (0 === numBlocks)
 			return Promise.resolve([]);
 
 		return this.chainStatisticCurrent().then(chainStatistic => {
 			const { startHeight, endHeight } = calculateSinceHeight(convertToLong(height), chainStatistic.height, numBlocks);
 			const condition = { 'block.height': { $gt: startHeight, $lte: endHeight } };
-      return this.sortedBlocks('blocks', condition, numBlocks)
+      return this.sortedBlocks(collectionName, condition, numBlocks)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}

@@ -24,38 +24,30 @@ const routeResultTypes = require('./routeResultTypes');
 const routeUtils = require('./routeUtils');
 const errors = require('../server/errors');
 
-const parseHeight = params => routeUtils.parseArgument(params, 'height', 'uint');
-const parseHeightOrTimeMod = params => routeUtils.parseArgument(params, 'height', 'uint_or_timemod');
-
-const getLimit = (validLimits, params) => {
-	const limit = routeUtils.parseArgument(params, 'limit', 'uint');
-	return -1 === validLimits.indexOf(limit) ? undefined : limit;
-};
-
 const alignDown = (height, alignment) => (Math.floor((height - 1) / alignment) * alignment) + 1;
 
 // Implied method to get blocks from or since height.
 //	req - Request data.
 // 	res - Response data.
 //	next - Control flow callback.
+//	db - Database utility.
+//	collectionName - Name of the collection to query.
 // 	pageSizes - Array of valid page sizes.
 // 	redirectUrl - Callback to get redirect URL.
-//  direction - 'From' or 'Since'.
+//  duration - 'From' or 'Since'.
 //  transformer - Callback to transform each element.
 //  resultType - Data result type (for formatting).
-const getBlocks = (req, res, next, db, pageSizes, redirectUrl, direction, transformer, resultType) => {
-	const height = parseHeightOrTimeMod(req.params);
-	const limit = getLimit(pageSizes, req.params);
+const getBlocks = (req, res, next, db, collectionName, pageSizes, redirectUrl, duration, transformer, resultType) => {
+	const height = routeUtils.parseArgument(req.params, 'height', 'uintOrTimemod');
+	const limit = routeUtils.parseEnumeratedArgument(req.params, 'limit', pageSizes, 'uint');
 
 	if (!limit) {
 		return res.redirect(redirectUrl(req.params.height, pageSizes[0]), next);
 	}
 
-	return db['blocks' + direction + 'Height'](height, limit).then(blocks => {
-		const data = blocks.map(transformer);
-		res.send({ payload: data, type: resultType });
-		next();
-	});
+	const dbMethod = 'blocks' + duration + 'Height';
+	const dbArgs = [collectionName, height, limit];
+	routeUtils.queryAndSendDurationCollection(res, next, db, dbMethod, dbArgs, transformer, resultType);
 };
 
 module.exports = {
@@ -63,7 +55,7 @@ module.exports = {
 		const validPageSizes = routeUtils.generateValidPageSizes(config.pageSize); // throws if there is not at least one valid page size
 
 		server.get('/block/:height', (req, res, next) => {
-			const height = parseHeight(req.params);
+			const height = routeUtils.parseArgument(req.params, 'height', 'uint');
 
 			return dbFacade.runHeightDependentOperation(db, height, () => db.blockAtHeight(height))
 				.then(result => result.payload)
@@ -76,7 +68,7 @@ module.exports = {
 		);
 
 		server.get('/block/:height/transactions', (req, res, next) => {
-			const height = parseHeight(req.params);
+			const height = routeUtils.parseArgument(req.params, 'height', 'uint');
 			const pagingOptions = routeUtils.parsePagingArguments(req.params);
 
 			const operation = () => db.transactionsAtHeight(height, pagingOptions.id, pagingOptions.pageSize);
@@ -92,8 +84,8 @@ module.exports = {
 		});
 
 		server.get('/blocks/:height/limit/:limit', (req, res, next) => {
-			const height = parseHeight(req.params);
-			const limit = getLimit(validPageSizes, req.params);
+			const height = routeUtils.parseArgument(req.params, 'height', 'uint');
+			const limit = routeUtils.parseEnumeratedArgument(req.params, 'limit', validPageSizes, 'uint');
 
 			const sanitizedLimit = limit || validPageSizes[0];
 			const sanitizedHeight = alignDown(height || 1, sanitizedLimit);
@@ -115,11 +107,12 @@ module.exports = {
 		//	- earliest (returning from the earliest block, IE, nothing).
 		//	- A block height (as a number).
 		server.get('/blocks/from/:height/limit/:limit', (req, res, next) => {
+			const collectionName = 'blocks';
 			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}`;
-			const direction = 'From';
+			const duration = 'From';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
-			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
 		});
 
 		// Gets blocks starting from the height (non-inclusive).
@@ -128,29 +121,32 @@ module.exports = {
 		//	- earliest (returning since the earliest block).
 		//	- A block height (as a number).
 		server.get('/blocks/since/:height/limit/:limit', (req, res, next) => {
+			const collectionName = 'blocks';
 			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}`;
-			const direction = 'Since';
+			const duration = 'Since';
 			const transformer = (info) => info;
 			const resultType = routeResultTypes.block;
-			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/from/:height/limit/:limit/height', (req, res, next) => {
+			const collectionName = 'blocks';
 			const redirectUrl = (height, pageSize) => `/blocks/from/${height}/limit/${pageSize}/height`;
-			const direction = 'From';
+			const duration = 'From';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;
-			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
 		});
 
 		// TODO(ahuszagh) Debug method. Remove later.
 		server.get('/blocks/since/:height/limit/:limit/height', (req, res, next) => {
+			const collectionName = 'blocks';
 			const redirectUrl = (height, pageSize) => `/blocks/since/${height}/limit/${pageSize}/height`;
-			const direction = 'Since';
+			const duration = 'Since';
 			const transformer = (info) => { return { height: info.block.height }; };
 			const resultType = routeResultTypes.blockHeight;
-			return getBlocks(req, res, next, db, validPageSizes, redirectUrl, direction, transformer, resultType);
+			return getBlocks(req, res, next, db, collectionName, validPageSizes, redirectUrl, duration, transformer, resultType);
 		});
 	}
 };

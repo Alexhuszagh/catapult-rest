@@ -25,25 +25,53 @@ const catapult = require('catapult-sdk');
 
 const { address } = catapult.model;
 const { buildAuditPath, indexOfLeafWithHash } = catapult.crypto.merkle;
-const { convert } = catapult.utils;
+const { convert, uint64 } = catapult.utils;
 const packetHeader = catapult.packet.header;
 const constants = {
 	sizes: {
 		hexPublicKey: 64,
 		addressEncoded: 40,
+		hexHash256: 64,
 		hash256: 32,
-		hash512: 64
+		hexHash512: 128,
+		hash512: 64,
+		hexObjectId: 24,
+		hexNamespaceId: 16,
+		hexMosaicId: 16
 	}
 };
 
-const isObjectId = str => 24 === str.length && convert.isHexString(str);
+const namedValidatorMap = {
+	objectId: str => constants.sizes.hexObjectId === str.length && convert.isHexString(str),
+	namespaceId: str => constants.sizes.hexNamespaceId === str.length && convert.isHexString(str),
+	mosaicId: str => constants.sizes.hexMosaicId === str.length && convert.isHexString(str),
+	address: str => constants.sizes.addressEncoded === str.length,
+	publicKey: str => constants.sizes.hexPublicKey === str.length,
+	hash256: str => constants.sizes.hexHash256 === str.length,
+	hash512: str => constants.sizes.hexHash512 === str.length,
+	earliest: str => str === 'earliest' || str === 'min',
+	latest: str => str === 'latest' || str === 'max'
+	// TODO(ahuszagh) Add other validators here, like richest, latest.
+};
 
 const namedParserMap = {
 	objectId: str => {
-		if (!isObjectId(str))
+		if (!namedValidatorMap.objectId(str))
 			throw Error('must be 12-byte hex string');
 
 		return str;
+	},
+	namespaceId: str => {
+		if (!namedValidatorMap.namespaceId(str))
+			throw Error('must be 8-byte hex string');
+
+		return uint64.fromHex(str);
+	},
+	mosaicId: str => {
+		if (!namedValidatorMap.mosaicId(str))
+			throw Error('must be 8-byte hex string');
+
+		return uint64.fromHex(str);
 	},
 	uint: str => {
 		const result = convert.tryParseUint(str);
@@ -53,10 +81,10 @@ const namedParserMap = {
 		return result;
 	},
 	// Parse a unsigned integer or a time modifier.
-	uint_or_timemod: str => {
-		if (str === 'earliest')
+	uintOrTimemod: str => {
+		if (namedValidatorMap.earliest(str))
 			return 0;
-		if (str === 'latest')
+		if (namedValidatorMap.latest(str))
 			return Number.MAX_SAFE_INTEGER;
 		const result = convert.tryParseUint(str);
 		if (undefined === result)
@@ -64,34 +92,35 @@ const namedParserMap = {
 
 		return result;
 	},
+	// TODO(ahuszagh) Add other uint_or_x types here.
 	address: str => {
-		if (constants.sizes.addressEncoded === str.length)
+		if (namedValidatorMap.address(str))
 			return address.stringToAddress(str);
 
 		throw Error(`invalid length of address '${str.length}'`);
 	},
 	publicKey: str => {
-		if (constants.sizes.hexPublicKey === str.length)
+		if (namedValidatorMap.publicKey(str))
 			return convert.hexToUint8(str);
 
 		throw Error(`invalid length of publicKey '${str.length}'`);
 	},
 	accountId: str => {
-		if (constants.sizes.hexPublicKey === str.length)
+		if (namedValidatorMap.publicKey(str))
 			return ['publicKey', convert.hexToUint8(str)];
-		if (constants.sizes.addressEncoded === str.length)
+		if (namedValidatorMap.address(str))
 			return ['address', address.stringToAddress(str)];
 
 		throw Error(`invalid length of account id '${str.length}'`);
 	},
 	hash256: str => {
-		if (2 * constants.sizes.hash256 === str.length)
+		if (namedValidatorMap.hash256(str))
 			return convert.hexToUint8(str);
 
 		throw Error(`invalid length of hash256 '${str.length}'`);
 	},
 	hash512: str => {
-		if (2 * constants.sizes.hash512 === str.length)
+		if (namedValidatorMap.has512(str))
 			return convert.hexToUint8(str);
 
 		throw Error(`invalid length of hash512 '${str.length}'`);
@@ -106,12 +135,60 @@ const routeUtils = {
 	 * @param {Function|string} parser Parser to use or the name of a named parser.
 	 * @returns {object} Parsed value.
 	 */
-	parseArgument: (args, key, parser) => {
+	parseArgument(args, key, parser) {
 		try {
-			return ('string' === typeof parser ? namedParserMap[parser] : parser)(args[key]);
+			return this.parseValue(args[key], parser);
 		} catch (err) {
 			throw errors.createInvalidArgumentError(`${key} has an invalid format`, err);
 		}
+	},
+
+	/**
+	 * Parses an argument and throws an invalid argument error if it is invalid.
+	 * @param {object} args Container containing the argument to parse.
+	 * @param {string} key Name of the argument to parse.
+	 * @param {array} Array of valid parsed values.
+	 * @param {Function|string} parser Parser to use or the name of a named parser.
+	 * @returns {object} Parsed value.
+	 */
+	parseEnumeratedArgument(args, key, validValues, parser) {
+		try {
+			return this.parseEnumeratedValue(args[key], validValues, parser);
+		} catch (err) {
+			throw errors.createInvalidArgumentError(`${key} has an invalid format`, err);
+		}
+	},
+
+	/**
+	 * Parses a value.
+	 * @param {any} str Value to parse.
+	 * @param {Function|string} parser Parser to use or the name of a named parser.
+	 * @returns {object} Parsed value.
+	 */
+	parseValue: (str, parser) => {
+		return ('string' === typeof parser ? namedParserMap[parser] : parser)(str);
+	},
+
+	/**
+	 * Parses a value with valid enumerated values.
+	 * @param {any} str Value to parse.
+	 * @param {array} Array of valid parsed values.
+	 * @param {Function|string} parser Parser to use or the name of a named parser.
+	 * @returns {object} Parsed value or undefined.
+	 */
+	parseEnumeratedValue(str, validValues, parser) {
+		const value = this.parseValue(str, parser);
+		return -1 === validValues.indexOf(value) ? undefined : value;
+	},
+
+	/**
+	 * Validates a value to parse.
+	 * @param {any} value Value to validate.
+	 * @param {Function|string} validator Validator to use or the name of a named validator.
+	 * @returns {object} Whether value is valid.
+	 */
+	validateValue: (value, validator) => {
+		return ('string' === typeof validator ? namedValidatorMap[validator] : validator)(value);
 	},
 
 	/**
@@ -141,7 +218,7 @@ const routeUtils = {
 	parsePagingArguments: args => {
 		const parsedOptions = { id: undefined, pageSize: 0 };
 		const parsers = {
-			id: { tryParse: str => (isObjectId(str) ? str : undefined), type: 'object id' },
+			id: { tryParse: str => (namedValidatorMap.objectId(str) ? str : undefined), type: 'object id' },
 			pageSize: { tryParse: convert.tryParseUint, type: 'unsigned integer' }
 		};
 
@@ -226,6 +303,24 @@ const routeUtils = {
 			};
 		}
 	}),
+
+	/**
+	 * Query and send duration collection to network.
+	 * @param {object} res Restify response object.
+	 * @param {Function} next Restify next callback handler.
+	 * @param {object} db Catapult or plugin database utility.
+	 * @param {string} dbMethod Name of database method to call.
+	 * @param {array} dbArgs Arguments to database method.
+	 * @param {Function} transformer Callback to transform returned data prior to sending.
+	 * @param {string} resultType Response data type.
+	 */
+	queryAndSendDurationCollection: (res, next, db, dbMethod, dbArgs, transformer, resultType) => {
+		db[dbMethod](...dbArgs).then(data => {
+	    const transformed = data.map(transformer);
+	    res.send({ payload: transformed, type: resultType });
+	    next();
+	  });
+	},
 
 	/**
 	 * Adds GET and POST routes for looking up documents of a single type.
