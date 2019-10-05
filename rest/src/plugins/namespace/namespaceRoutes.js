@@ -21,6 +21,7 @@
 const namespaceUtils = require('./namespaceUtils');
 const dbUtils = require('../../db/dbUtils');
 const routeUtils = require('../../routes/routeUtils');
+const routeResultTypes = require('../../routes/routeResultTypes');
 const errors = require('../../server/errors');
 const AccountType = require('../AccountType');
 const catapult = require('catapult-sdk');
@@ -72,6 +73,50 @@ const getNamespaces = (req, res, next, db, collectionName, countRange, redirectU
 	}
 
   routeUtils.queryAndSendDurationCollection(res, next, namespace, db, dbMethod, dbArgs, transformer, resultType);
+}
+
+// Implied method to get transactions from or since identifier.
+//  req - Request data.
+//   res - Response data.
+//  next - Control flow callback.
+//  db - Database utility.
+//  collectionName - Name of the collection to query.
+//   countRange - Range of valid query counts.
+//   redirectUrl - Callback to get redirect URL.
+//  sortType - Keyword for the sorted type.
+//  duration - 'From' or 'Since'.
+//  transformer - Callback to transform each element.
+//  resultType - Data result type (for formatting).
+const getAccounts = (req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType) => {
+  const account = req.params.account;
+  const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
+
+  if (!limit) {
+    return res.redirect(redirectUrl(account, countRange.preset), next);
+  }
+
+  let dbMethod;
+  let dbArgs;
+  if (routeUtils.validateValue(account, 'least')) {
+    dbMethod = 'accounts' + sortType + duration + 'Least';
+    dbArgs = [collectionName, limit];
+  } else if (routeUtils.validateValue(account, 'most')) {
+    dbMethod = 'accounts' + sortType + duration + 'Most';
+    dbArgs = [collectionName, limit];
+  } else if (routeUtils.validateValue(account, 'address')) {
+    const address = routeUtils.parseValue(account, 'address');
+    dbMethod = 'accounts' + sortType + duration + 'Address';
+    dbArgs = [collectionName, address, limit];
+  } else if (routeUtils.validateValue(account, 'publicKey')) {
+    const publicKey = routeUtils.parseValue(account, 'publicKey');
+    dbMethod = 'accounts' + sortType + duration + 'PublicKey';
+    dbArgs = [collectionName, publicKey, limit];
+  } else {
+    res.send(errors.createInvalidArgumentError('accountId has an invalid format'));
+    return next();
+  }
+
+  routeUtils.queryAndSendDurationCollection(res, next, account, db, dbMethod, dbArgs, transformer, resultType);
 }
 
 module.exports = {
@@ -179,7 +224,7 @@ module.exports = {
 			'accountNames'
 		));
 
-		// CURSORS
+		// CURSORS - NAMESPACES
 
     // Gets namespace up to the identifier (non-inclusive).
     // The identifier may be:
@@ -229,6 +274,116 @@ module.exports = {
       return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 
-    // TODO(ahuszagh) Need to add account routes filtered for namespaces here...
+    // CURSORS - ACCOUNTS BY CURRENCY BALANCE
+
+    // Gets accounts by currency balance up to the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning up-to and including the account with the most currency balance).
+    //  - least (returning from the account with the least currency balance, IE, nothing).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/currency/from/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/currency/from/${account}/limit/${limit}`;
+      const sortType = 'ByCurrencyBalance';
+      const duration = 'From';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // Gets accounts by currency balance since the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning since the account with the most currency balance, IE, nothing).
+    //  - least (returning since the account with the least currency balance).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/currency/since/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/currency/since/${account}/limit/${limit}`;
+      const sortType = 'ByCurrencyBalance';
+      const duration = 'Since';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/currency/from/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/currency/from/${account}/limit/${limit}/address`;
+      const sortType = 'ByCurrencyBalance';
+      const duration = 'From';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/currency/since/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/currency/since/${account}/limit/${limit}/address`;
+      const sortType = 'ByCurrencyBalance';
+      const duration = 'Since';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // CURSORS - ACCOUNTS BY HARVEST BALANCE
+
+    // Gets accounts by harvest balance up to the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning up-to and including the account with the most harvest balance).
+    //  - least (returning from the account with the least harvest balance, IE, nothing).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/harvest/from/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/harvest/from/${account}/limit/${limit}`;
+      const sortType = 'ByHarvestBalance';
+      const duration = 'From';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // Gets accounts by harvest balance since the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning since the account with the most harvest balance, IE, nothing).
+    //  - least (returning since the account with the least harvest balance).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/harvest/since/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/harvest/since/${account}/limit/${limit}`;
+      const sortType = 'ByHarvestBalance';
+      const duration = 'Since';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/harvest/from/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/harvest/from/${account}/limit/${limit}/address`;
+      const sortType = 'ByHarvestBalance';
+      const duration = 'From';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/harvest/since/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/harvest/since/${account}/limit/${limit}/address`;
+      const sortType = 'ByHarvestBalance';
+      const duration = 'Since';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
 	}
 };

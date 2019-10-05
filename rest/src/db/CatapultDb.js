@@ -763,6 +763,23 @@ class CatapultDb {
 		return addFieldImportanceImpl('height');
 	}
 
+	// Helper methods to add the harvestedBlocks field.
+	addFieldHarvestedBlocks() {
+		return { $size: "$account.activityBuckets" };
+	}
+
+	// Helper methods to add the harvestedFees field.
+	addFieldHarvestedFees() {
+		// Sum reduce over `totalFeesPaid` in `account.activityBuckets`.
+		return {
+			$reduce: {
+				input: "$account.activityBuckets",
+				initialValue: { $toLong: 0 },
+				in: { $add : ["$$value", "$$this.totalFeesPaid"] }
+ 			}
+		};
+	}
+
 	// Retrieve account by address with custom fields added and projected.
 	rawAccountByAddress(collectionName, address, addFields, projection) {
 		const aggregation = [
@@ -915,7 +932,7 @@ class CatapultDb {
 		const addFields = { $addFields: {
 			'account.importance': this.addFieldImportance(),
 			'account.importanceHeight': this.addFieldImportanceHeight(),
-			'account.harvestedBlocks': { $size: "$account.activityBuckets" }
+			'account.harvestedBlocks': this.addFieldHarvestedBlocks()
 		} };
 		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0 };
 		return this.rawAccountByAddress(collectionName, address, addFields, projection);
@@ -932,7 +949,7 @@ class CatapultDb {
 			{ $addFields: {
 				'account.importance': this.addFieldImportance(),
 				'account.importanceHeight': this.addFieldImportanceHeight(),
-				'account.harvestedBlocks': { $size: "$account.activityBuckets" }
+				'account.harvestedBlocks': this.addFieldHarvestedBlocks()
 			} },
 			{ $match: match }
 		];
@@ -1020,8 +1037,8 @@ class CatapultDb {
 		const addFields = { $addFields: {
 			'account.importance': this.addFieldImportance(),
 			'account.importanceHeight': this.addFieldImportanceHeight(),
-			'account.harvestedBlocks': { $size: "$account.activityBuckets" },
-			'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" }
+			'account.harvestedBlocks': this.addFieldHarvestedBlocks(),
+			'account.harvestedFees': this.addFieldHarvestedFees()
 		} };
 		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0, 'account.harvestedFees': 0 };
 		return this.rawAccountByAddress(collectionName, address, addFields, projection);
@@ -1038,8 +1055,8 @@ class CatapultDb {
 			{ $addFields: {
 				'account.importance': this.addFieldImportance(),
 				'account.importanceHeight': this.addFieldImportanceHeight(),
-				'account.harvestedBlocks': { $size: "$account.activityBuckets" },
-				'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" }
+				'account.harvestedBlocks': this.addFieldHarvestedBlocks(),
+				'account.harvestedFees': this.addFieldHarvestedFees()
 			} },
 			{ $match: match }
 		];

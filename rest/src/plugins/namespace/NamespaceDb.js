@@ -184,15 +184,224 @@ class NamespaceDb {
 
 	// region account by namespace-linked mosaic retrieval
 
-	// TODO(ahuszagh) Need to implement this:
-// Add these fields to an account.
-//		Filter, and sort.
-//			{ $addFields: {
-//				// TODO(ahuszagh) Need to implement...
-//				'account.networkCurrencyBalance': 0,
-//				'account.networkHarvestBalance': 0,
-//			} },
-//	sortedAccountsByBalance(collectionName, height, importance, id, count)
+	addFieldMosaicBalance(mosaicId) {
+		// Reduce over the account mosaics, and add the currency amount if
+		// the mosaics match, otherwise, add 0.
+		return {
+			$reduce: {
+				input: "$account.mosaics",
+				initialValue: { $toLong: 0 },
+				in: { $add : [
+					"$$value",
+					{
+						$cond: {
+							if: { $eq: [ "$$this.id", mosaicId ] },
+							then: "$$this.amount",
+							else: { $toLong: 0 }
+						}
+					}
+				] }
+			}
+		}
+	}
+
+	// Internal method to find sort accounts by balance in a mosaic ID from query.
+	sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count) {
+		const aggregation = [
+			{ $addFields: {
+				'account.importance': this.catapultDb.addFieldImportance(),
+				'account.importanceHeight': this.catapultDb.addFieldImportanceHeight(),
+				'account.balance': this.addFieldMosaicBalance(mosaicId),
+			} },
+			{ $match: match }
+		];
+		// Need secondary public key height and ID height to sort by when the
+		// account's public key was known to network.
+		const sorting = { 'account.balance': -1, 'account.publicKeyHeight': -1, _id: -1 };
+		const projection = { 'account.importances': 0, 'account.balance': 0 };
+
+		return this.catapultDb.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.catapultDb.sanitizer.deleteIds);
+	}
+
+	// endregion
+
+	// region cursor account by currency mosaic retrieval
+
+	rawAccountWithCurrencyBalanceByAddress(collectionName, address) {
+		return this.networkHarvestMosaic().then(mosaicId => {
+			const addFields = { $addFields: {
+				'account.importance': this.catapultDb.addFieldImportance(),
+				'account.importanceHeight': this.catapultDb.addFieldImportanceHeight(),
+				'account.balance': this.addFieldMosaicBalance(mosaicId)
+			} };
+			const projection = { 'account.importances': 0 };
+			return this.catapultDb.rawAccountByAddress(collectionName, address, addFields, projection);
+		});
+	}
+
+	rawAccountWithCurrencyBalanceByPublicKey(collectionName, publicKey) {
+		const address = this.catapultDb.publicKeyToAddress(publicKey);
+		return this.rawAccountWithCurrencyBalanceByAddress(collectionName, address);
+	}
+
+	sortedAccountsByCurrencyBalance(collectionName, match, count) {
+		return this.networkCurrencyMosaic().then(mosaicId => {
+			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count);
+		});
+	}
+
+	accountsByCurrencyBalanceFrom(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$lt', balance, height, id);
+		return this.sortedAccountsByCurrencyBalance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByCurrencyBalanceSince(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$gt', balance, height, id);
+		return this.sortedAccountsByCurrencyBalance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByCurrencyBalanceFromLeast(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByCurrencyBalanceSinceLeast(...args) {
+		const method = 'accountsByCurrencyBalanceSince';
+		const genArgs = () => [this.catapultDb.minLong(), this.catapultDb.minLong(), this.catapultDb.minObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByCurrencyBalanceFromMost(...args) {
+		const method = 'accountsByCurrencyBalanceFrom';
+		const genArgs = () => [this.catapultDb.maxLong(), this.catapultDb.maxLong(), this.catapultDb.maxObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByCurrencyBalanceSinceMost(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByCurrencyBalanceFromAccount(...args) {
+		const method = 'accountsByCurrencyBalanceFrom';
+    const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByCurrencyBalanceSinceAccount(...args) {
+		const method = 'accountsByCurrencyBalanceFrom';
+		const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByCurrencyBalanceFromAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByCurrencyBalanceFromAccount', 'rawAccountWithCurrencyBalanceByAddress', ...args);
+	}
+
+	accountsByCurrencyBalanceSinceAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByCurrencyBalanceSinceAccount', 'rawAccountWithCurrencyBalanceByAddress', ...args);
+	}
+
+	accountsByCurrencyBalanceFromPublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByCurrencyBalanceFromAccount', 'rawAccountWithCurrencyBalanceByPublicKey', ...args);
+	}
+
+	accountsByCurrencyBalanceSincePublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByCurrencyBalanceSinceAccount', 'rawAccountWithCurrencyBalanceByPublicKey', ...args);
+	}
+
+	// endregion
+
+	// region cursor account by harvest mosaic retrieval
+
+	rawAccountWithHarvestBalanceByAddress(collectionName, address) {
+		return this.networkHarvestMosaic().then(mosaicId => {
+			const addFields = { $addFields: {
+				'account.importance': this.catapultDb.addFieldImportance(),
+				'account.importanceHeight': this.catapultDb.addFieldImportanceHeight(),
+				'account.balance': this.addFieldMosaicBalance(mosaicId)
+			} };
+			const projection = { 'account.importances': 0 };
+			return this.catapultDb.rawAccountByAddress(collectionName, address, addFields, projection);
+		});
+	}
+
+	rawAccountWithHarvestBalanceByPublicKey(collectionName, publicKey) {
+		const address = this.catapultDb.publicKeyToAddress(publicKey);
+		return this.rawAccountWithHarvestBalanceByAddress(collectionName, address);
+	}
+
+	sortedAccountsByHarvestBalance(collectionName, match, count) {
+		return this.networkHarvestMosaic().then(mosaicId => {
+			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count);
+		});
+	}
+
+	accountsByHarvestBalanceFrom(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$lt', balance, height, id);
+		return this.sortedAccountsByHarvestBalance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByHarvestBalanceSince(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$gt', balance, height, id);
+		return this.sortedAccountsByHarvestBalance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByHarvestBalanceFromLeast(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByHarvestBalanceSinceLeast(...args) {
+		const method = 'accountsByHarvestBalanceSince';
+		const genArgs = () => [this.catapultDb.minLong(), this.catapultDb.minLong(), this.catapultDb.minObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestBalanceFromMost(...args) {
+		const method = 'accountsByHarvestBalanceFrom';
+		const genArgs = () => [this.catapultDb.maxLong(), this.catapultDb.maxLong(), this.catapultDb.maxObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestBalanceSinceMost(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByHarvestBalanceFromAccount(...args) {
+		const method = 'accountsByHarvestBalanceFrom';
+    const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestBalanceSinceAccount(...args) {
+		const method = 'accountsByHarvestBalanceFrom';
+		const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestBalanceFromAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceFromAccount', 'rawAccountWithHarvestBalanceByAddress', ...args);
+	}
+
+	accountsByHarvestBalanceSinceAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceSinceAccount', 'rawAccountWithHarvestBalanceByAddress', ...args);
+	}
+
+	accountsByHarvestBalanceFromPublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceFromAccount', 'rawAccountWithHarvestBalanceByPublicKey', ...args);
+	}
+
+	accountsByHarvestBalanceSincePublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceSinceAccount', 'rawAccountWithHarvestBalanceByPublicKey', ...args);
+	}
 
 	// endregion
 

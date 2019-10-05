@@ -313,11 +313,5 @@ module.exports = {
 			return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
 >>>>>>> Added basic account methods, DB queries, and simplified the query API.
 		});
-
-		// TODO(ahuszagh) Need to add.
-		// Going to need an actual method.
-		// 	accounts/balance/currency/...
-		// 	accounts/balance/harvest/...
-		// These will go in the namespace routes.
 	}
 };
