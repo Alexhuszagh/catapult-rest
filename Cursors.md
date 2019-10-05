@@ -61,36 +61,36 @@ From these basic building-blocks, we can implement a large array of functionalit
 *Implemented Routes*
 
 _Unconfirmed Transactions:_
-`/transactions/unconfirmed/from/$transaction/limit/$limit`
-`/transactions/unconfirmed/since/$transaction/limit/$limit`
+- `/transactions/unconfirmed/from/$transaction/limit/$limit`
+- `/transactions/unconfirmed/since/$transaction/limit/$limit`
 
 _Partial Transactions:_
-`/transactions/partial/from/$transaction/limit/$limit`
-`/transactions/partial/since/$transaction/limit/$limit`
+- `/transactions/partial/from/$transaction/limit/$limit`
+- `/transactions/partial/since/$transaction/limit/$limit`
 
 _Transactions Filtered By Type:_
-`/transactions/from/$transaction/type/$type/limit/$limit`
-`/transactions/since/$transaction/type/$type/limit/$limit`
+- `/transactions/from/$transaction/type/$type/limit/$limit`
+- `/transactions/since/$transaction/type/$type/limit/$limit`
 
 _Mosaics:_
-`/mosaics/from/$mosaic/limit/$limit`
-`/mosaics/since/$mosaic/limit/$limit`
+- `/mosaics/from/$mosaic/limit/$limit`
+- `/mosaics/since/$mosaic/limit/$limit`
 
 _Namespaces:_
-`/namespaces/from/$namespace/limit/$limit`
-`/namespaces/since/$namespace/limit/$limit`
+- `/namespaces/from/$namespace/limit/$limit`
+- `/namespaces/since/$namespace/limit/$limit`
 
 _Accounts:_
-`/accounts/importance/from/$account/limit/$limit`
-`/accounts/importance/since/$account/limit/$limit`
-`/accounts/harvested/blocks/from/$account/limit/$limit`
-`/accounts/harvested/blocks/since/$account/limit/$limit`
-`/accounts/harvested/fees/from/$account/limit/$limit`
-`/accounts/harvested/fees/since/$account/limit/$limit`
-`/accounts/balance/currency/from/$account/limit/$limit`
-`/accounts/balance/currency/since/$account/limit/$limit`
-`/accounts/balance/harvest/from/$account/limit/$limit`
-`/accounts/balance/harvest/since/$account/limit/$limit`
+- `/accounts/importance/from/$account/limit/$limit`
+- `/accounts/importance/since/$account/limit/$limit`
+- `/accounts/harvested/blocks/from/$account/limit/$limit`
+- `/accounts/harvested/blocks/since/$account/limit/$limit`
+- `/accounts/harvested/fees/from/$account/limit/$limit`
+- `/accounts/harvested/fees/since/$account/limit/$limit`
+- `/accounts/balance/currency/from/$account/limit/$limit`
+- `/accounts/balance/currency/since/$account/limit/$limit`
+- `/accounts/balance/harvest/from/$account/limit/$limit`
+- `/accounts/balance/harvest/since/$account/limit/$limit`
 
 *Examples*
 
