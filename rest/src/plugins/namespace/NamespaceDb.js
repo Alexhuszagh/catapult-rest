@@ -126,65 +126,62 @@ class NamespaceDb {
 	}
 
 	// Get namespaces up to (non-inclusive) a namespace object.
-	namespacesFromNamespace(collectionName, namespace, numNamespaces) {
-		if (undefined === namespace)
+	namespacesFromNamespace(collectionName, rawNamespace, numNamespaces) {
+		if (undefined === rawNamespace)
 			return undefined;
-		const height = namespace.namespace.startHeight;
-		const id = namespace.meta.id;
+		const height = rawNamespace.namespace.startHeight;
+		const id = rawNamespace._id;
 		return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
 	}
 
 	// Get namespaces since (non-inclusive) a namespace object.
-	namespacesSinceNamespace(collectionName, namespace, numNamespaces) {
-		if (undefined === namespace)
+	namespacesSinceNamespace(collectionName, rawNamespace, numNamespaces) {
+		if (undefined === rawNamespace)
 			return undefined;
-		const height = namespace.namespace.startHeight;
-		const id = namespace.meta.id;
+		const height = rawNamespace.namespace.startHeight;
+		const id = rawNamespace._id;
 		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
 	}
 
 	// Get namespaces up to (non-inclusive) the namespace at id.
 	namespacesFromId(collectionName, id, numNamespaces) {
-		return this.namespaceById(collectionName, id).then(namespace => {
+		return this.rawNamespaceById(collectionName, id).then(namespace => {
 			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
 		});
 	}
 
 	// Get namespaces since (non-inclusive) the namespace at id.
 	namespacesSinceId(collectionName, id, numNamespaces) {
-		return this.namespaceById(collectionName, id).then(namespace => {
+		return this.rawNamespaceById(collectionName, id).then(namespace => {
 			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
 		});
 	}
 
 	// Get namespaces up to (non-inclusive) the namespace at object id.
 	namespacesFromObjectId(collectionName, id, numNamespaces) {
-		return this.namespaceByObjectId(collectionName, id).then(namespace => {
+		return this.rawNamespaceByObjectId(collectionName, id).then(namespace => {
 			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
 		});
 	}
 
 	// Get namespaces since (non-inclusive) the namespace at object id.
 	namespacesSinceObjectId(collectionName, id, numNamespaces) {
-		return this.namespaceByObjectId(collectionName, id).then(namespace => {
+		return this.rawNamespaceByObjectId(collectionName, id).then(namespace => {
 			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
 		});
 	}
 
-	// Retrieve namespace by object ID.
-	namespaceByObjectId(collectionName, id) {
+	// Internal method: retrieve namespace by object ID.
+  // Does not process internal _id.
+	rawNamespaceByObjectId(collectionName, id) {
 		const namespaceId = new ObjectId(id);
 		const condition = { _id: { $eq: namespaceId } };
-		return this.catapultDb.queryDocument(collectionName, condition)
-			.then(this.catapultDb.sanitizer.copyAndDeleteId);
+		return this.catapultDb.queryDocument(collectionName, condition);
 	}
 
-	/**
-	 * Retrieves a namespace.
-	 * @param {module:catapult.utils/uint64~uint64} id Namespace id.
-	 * @returns {Promise.<object>} Namespace.
-	 */
-	namespaceById(collectionName, id) {
+	// Internal method: retrieve namespace by namespace ID.
+  // Does not process internal _id.
+  rawNamespaceById(collectionName, id) {
 		const namespaceId = new Long(id[0], id[1]);
 		const conditions = { $or: [] };
 
@@ -196,7 +193,16 @@ class NamespaceDb {
 			conditions.$or.push(conjunction);
 		}
 
-		return this.catapultDb.queryDocument(collectionName, conditions)
+		return this.catapultDb.queryDocument(collectionName, conditions);
+	}
+
+	/**
+	 * Retrieves a namespace.
+	 * @param {module:catapult.utils/uint64~uint64} id Namespace id.
+	 * @returns {Promise.<object>} Namespace.
+	 */
+	namespaceById(collectionName, id) {
+		return this.rawNamespaceById(collectionName, id)
 			.then(this.catapultDb.sanitizer.copyAndDeleteId);
 	}
 

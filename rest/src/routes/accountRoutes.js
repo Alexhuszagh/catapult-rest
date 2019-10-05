@@ -98,6 +98,7 @@ module.exports = {
 		// Debug method. TODO(ahuszagh) Remove.
 		server.get('/accounts/testing', (req, res, next) => {
 			db.sortedAccountsByBalance('accounts', {}, 25).then(accounts => {
+				console.log(accounts);
 				res.send({ payload: accounts, type: routeResultTypes.account });
 				next();
 			});

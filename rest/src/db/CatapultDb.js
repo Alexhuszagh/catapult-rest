@@ -191,6 +191,7 @@ class CatapultDb {
 			.toArray();
 	}
 
+	// TODO(ahuszagh)
 	//	Remove sortedAggregateCollection
 	//	Replace with direct query methods we need.
 
@@ -241,12 +242,79 @@ class CatapultDb {
 
 	// Internal method to find sorted accounts by balance from query.
 	sortedAccountsByBalance(collectionName, match, count) {
-		// TODO(ahuszagh) Implement.
-		const aggregation = {};
-		const sorting = { _id: -1 };
-		const projection = {};
-		return this.sortedAggregateCollection(collectionName, aggregation, projection, sorting, count)
-			.then(this.sanitizer.deleteIds)
+
+// 	WANTED:
+//		This format:
+//  { account:
+//     { address: [Binary],
+//       addressHeight: [Long],
+//       publicKey: [Binary],
+//       publicKeyHeight: [Long],
+//       accountType: 0,
+//       linkedAccountKey: [Binary],
+//       importances: [],
+//       activityBuckets: [],
+//       mosaics: [Array] } }
+//
+//	What we actually get:
+//  { account:
+//     { address: [Binary],
+//       addressHeight: 1,
+//       publicKey: [Binary],
+//       publicKeyHeight: 0,
+//       accountType: 0,
+//       linkedAccountKey: [Binary],
+//       importances: [],
+//       activityBuckets: [],
+//       mosaics: [Array] } }
+
+	// TODO(ahuszagh) Change this slightly
+		const aggregation = [
+			{ $addFields: { 'account.harvestedBlocks': { $size: "$account.activityBuckets" } } },
+			{ $addFields: { 'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" } } },
+			// TODO(ahuszagh)
+			//	First, need to let to bind the account.importances or a default.
+			//	Then, need to access this.
+			{ $addFields: {
+//				$let: {
+//	        vars: {
+//	          x: {
+//	          	$cond: {
+//	          		if: { $gt: [ { $size: "$account.importances" }, 0 ] },
+//          			then: { $arrayElemAt: [ "$account.importances", -1 ] },
+//	          		else: {
+//	          			importance: { $toLong: 0 },
+//	          			importanceHeight: { $toLong: 0 }
+//	          		}
+//	          	}
+//	          }
+//	        },
+//	        in: {
+//	          'account.importance': "$$x.importance",
+//	          'account.importanceHeight': "$$x.importanceHeight",
+//	        }
+//	      }
+			} },
+
+//			{ $addFields: { 'account.importance': {
+//				// TODO(ahuszagh) This sucks... Lols...
+//				// use
+//				$cond: {
+//					if: { $gt: [ { $size: "$account.importances" }, 0 ] },
+//						// TODO(ahuszagh) How do I get the field I want here???
+//					then: { $arrayElemAt: [ "$account.importances", -1 ] },
+//					else: { $toLong: 0 }
+//				}
+//			} } },
+		];
+//		const sorting = { _id: -1 };
+		return this.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			//.sort(sorting)
+			//.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.deleteIds);
 	}
 
 //	// Internal method to find sorted accounts by importance from query.
@@ -354,46 +422,47 @@ class CatapultDb {
 	}
 
 	// Get transactions up to (non-inclusive) a transaction object.
-	transactionsFromTransaction(collectionName, transaction, numTransactions) {
-		if (undefined === transaction)
+	transactionsFromTransaction(collectionName, rawTransaction, numTransactions) {
+		if (undefined === rawTransaction)
 			return undefined;
-		const height = transaction.meta.height;
-		const index = transaction.meta.index;
+		const height = rawTransaction.meta.height;
+		const index = rawTransaction.meta.index;
 		return this.transactionsFromHeightAndIndex(collectionName, height, index, numTransactions);
 	}
 
 	// Get transactions since (non-inclusive) a transaction object.
-	transactionsSinceTransaction(collectionName, transaction, numTransactions) {
-		if (undefined === transaction)
+	transactionsSinceTransaction(collectionName, rawTransaction, numTransactions) {
+		if (undefined === rawTransaction)
 			return undefined;
-		const height = transaction.meta.height;
-		const index = transaction.meta.index;
+		const height = rawTransaction.meta.height;
+		const index = rawTransaction.meta.index;
 		return this.transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions);
 	}
 
-	// Retrieve transaction by hash.
-  transactionByHash(collectionName, hash) {
+	// Internal method: retrieve transaction by hash.
+	// Does not process internal _id.
+  rawTransactionByHash(collectionName, hash) {
 		const condition = { 'meta.hash': { $eq: Buffer.from(hash) } };
-		return this.queryDocument(collectionName, condition)
-			.then(this.sanitizer.copyAndDeleteId);
+		return this.queryDocument(collectionName, condition);
   }
 
 	// Get transactions up to (non-inclusive) the transaction at hash.
 	transactionsFromHash(collectionName, hash, numTransactions) {
-		return this.transactionByHash(collectionName, hash).then(transaction => {
+		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
 			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
 	// Get transactions since (non-inclusive) the transaction at hash.
 	transactionsSinceHash(collectionName, hash, numTransactions) {
-		return this.transactionByHash(collectionName, hash).then(transaction => {
+		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
 			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
-	// Retrieve transaction by ID.
-  transactionById(collectionName, id) {
+	// Internal method: retrieve transaction by ID.
+	// Does not process internal _id.
+  rawTransactionById(collectionName, id) {
 		const transactionId = new ObjectId(id);
 		const condition = { _id: { $eq: transactionId } };
 		return this.queryDocument(collectionName, condition)
@@ -402,14 +471,14 @@ class CatapultDb {
 
 	// Get transactions up to (non-inclusive) the transaction at id.
 	transactionsFromId(collectionName, id, numTransactions) {
-		return this.transactionById(collectionName, id).then(transaction => {
+		return this.rawTransactionById(collectionName, id).then(transaction => {
 			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
 		});
 	}
 
 	// Get transactions since (non-inclusive) the transaction at id.
 	transactionsSinceId(collectionName, id, numTransactions) {
-		return this.transactionById(collectionName, id).then(transaction => {
+		return this.rawTransactionById(collectionName, id).then(transaction => {
 			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
 		});
 	}
@@ -486,47 +555,47 @@ class CatapultDb {
 	}
 
 	// Get transactions filtered by type up to (non-inclusive) a transaction object.
-	transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions) {
-  	if (undefined === transaction)
+	transactionsByTypeFromTransaction(collectionName, rawTransaction, type, numTransactions) {
+  	if (undefined === rawTransaction)
       return undefined;
-		const height = transaction.meta.height;
-		const index = transaction.meta.index;
+		const height = rawTransaction.meta.height;
+		const index = rawTransaction.meta.index;
 		return this.transactionsByTypeFromHeightAndIndex(collectionName, height, index, type, numTransactions);
 	}
 
 	// Get transactions filtered by type since (non-inclusive) a transaction object.
-	transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions) {
-  	if (undefined === transaction)
+	transactionsByTypeSinceTransaction(collectionName, rawTransaction, type, numTransactions) {
+  	if (undefined === rawTransaction)
       return undefined;
-		const height = transaction.meta.height;
-		const index = transaction.meta.index;
+		const height = rawTransaction.meta.height;
+		const index = rawTransaction.meta.index;
 		return this.transactionsByTypeSinceHeightAndIndex(collectionName, height, index, type, numTransactions);
 	}
 
 	// Get transactions filtered by type up to (non-inclusive) the transaction at hash.
 	transactionsByTypeFromHash(collectionName, hash, type, numTransactions) {
-		return this.transactionByHash(collectionName, hash).then(transaction => {
+		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
 			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
 		});
 	}
 
 	// Get transactions filtered by type since (non-inclusive) the transaction at hash.
 	transactionsByTypeSinceHash(collectionName, hash, type, numTransactions) {
-		return this.transactionByHash(collectionName, hash).then(transaction => {
+		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
 			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
 		});
 	}
 
 	// Get transactions filtered by type up to (non-inclusive) the transaction at id.
 	transactionsByTypeFromId(collectionName, id, type, numTransactions) {
-		return this.transactionById(collectionName, id).then(transaction => {
+		return this.rawTransactionById(collectionName, id).then(transaction => {
 			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
 		});
 	}
 
 	// Get transactions filtered by type since (non-inclusive) the transaction at id.
 	transactionsByTypeSinceId(collectionName, id, type, numTransactions) {
-		return this.transactionById(collectionName, id).then(transaction => {
+		return this.rawTransactionById(collectionName, id).then(transaction => {
 			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
 		});
 	}

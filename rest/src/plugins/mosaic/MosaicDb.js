@@ -120,40 +120,40 @@ class MosaicDb {
   }
 
   // Get mosaics up to (non-inclusive) a mosaic object.
-  mosaicsFromMosaic(collectionName, mosaic, numMosaics) {
-    if (undefined === mosaic)
+  mosaicsFromMosaic(collectionName, rawMosaic, numMosaics) {
+    if (undefined === rawMosaic)
       return undefined;
-    const height = mosaic.mosaic.startHeight;
-    const id = mosaic._id;
+    const height = rawMosaic.mosaic.startHeight;
+    const id = rawMosaic._id;
     return this.mosaicsFromHeightAndId(collectionName, height, id, numMosaics);
   }
 
   // Get mosaics since (non-inclusive) a mosaic object.
-  mosaicsSinceMosaic(collectionName, mosaic, numMosaics) {
-    if (undefined === mosaic)
+  mosaicsSinceMosaic(collectionName, rawMosaic, numMosaics) {
+    if (undefined === rawMosaic)
       return undefined;
-    const height = mosaic.mosaic.startHeight;
-    const id = mosaic._id;
+    const height = rawMosaic.mosaic.startHeight;
+    const id = rawMosaic._id;
     return this.mosaicsSinceHeightAndId(collectionName, height, id, numMosaics);
   }
 
   // Get mosaics up to (non-inclusive) the mosaic at id.
   mosaicsFromId(collectionName, id, numMosaics) {
-    return this.mosaicById(collectionName, id).then(mosaic => {
+    return this.rawMosaicById(collectionName, id).then(mosaic => {
       return this.mosaicsFromMosaic(collectionName, mosaic, numMosaics);
     });
   }
 
   // Get mosaics since (non-inclusive) the mosaic at id.
   mosaicsSinceId(collectionName, id, numMosaics) {
-    return this.mosaicById(collectionName, id).then(mosaic => {
+    return this.rawMosaicById(collectionName, id).then(mosaic => {
       return this.mosaicsSinceMosaic(collectionName, mosaic, numMosaics);
     });
   }
 
-  // Internal method: Retrieve mosaic by ID.
-  // Leaves an extraneous _id.
-  mosaicById(collectionName, id) {
+  // Internal method: retrieve mosaic by ID.
+  // Does not process internal _id.
+  rawMosaicById(collectionName, id) {
 		const mosaicId = new Long(id[0], id[1]);
 		const condition = { 'mosaic.id': { $eq: mosaicId } };
 		return this.catapultDb.queryDocument(collectionName, condition);
