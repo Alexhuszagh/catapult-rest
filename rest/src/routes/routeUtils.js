@@ -31,6 +31,7 @@ const constants = {
 	sizes: {
 		hexPublicKey: 64,
 		addressEncoded: 40,
+		hexAddress: 50,
 		hexHash256: 64,
 		hash256: 32,
 		hexHash512: 128,
@@ -45,7 +46,7 @@ const namedValidatorMap = {
 	objectId: str => constants.sizes.hexObjectId === str.length && convert.isHexString(str),
 	namespaceId: str => constants.sizes.hexNamespaceId === str.length && convert.isHexString(str),
 	mosaicId: str => constants.sizes.hexMosaicId === str.length && convert.isHexString(str),
-	address: str => constants.sizes.addressEncoded === str.length,
+	address: str => constants.sizes.addressEncoded === str.length || constants.sizes.hexAddress === str.length,
 	publicKey: str => constants.sizes.hexPublicKey === str.length,
 	hash256: str => constants.sizes.hexHash256 === str.length,
 	hash512: str => constants.sizes.hexHash512 === str.length,
@@ -94,8 +95,10 @@ const namedParserMap = {
 		return result;
 	},
 	address: str => {
-		if (namedValidatorMap.address(str))
+		if (constants.sizes.addressEncoded === str.length)
 			return address.stringToAddress(str);
+		if (constants.sizes.hexAddress === str.length)
+			return convert.hexToUint8(str);
 
 		throw Error(`invalid length of address '${str.length}'`);
 	},

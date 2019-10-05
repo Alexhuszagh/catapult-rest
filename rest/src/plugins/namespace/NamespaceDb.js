@@ -24,6 +24,7 @@ const catapult = require('catapult-sdk');
 const MongoDb = require('mongodb');
 
 const { Long, ObjectId } = MongoDb;
+const { uint64 } = catapult.utils;
 
 const createActiveConditions = () => {
 	const conditions = { $and: [{ 'meta.active': true }] };
@@ -39,137 +40,7 @@ class NamespaceDb {
 		this.catapultDb = db;
 	}
 
-	// Internal method to find sorted namespaces from query.
-	sortedNamespaces(collectionName, condition, count) {
-		// Sort by descending startHeight, then by descending ID.
-		// Don't sort solely on ID, since it will break if 32-bit time wraps.
-		// TODO(ahuszagh)
-		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const sorting = { 'namespace.startHeight': -1, _id: -1 };
-		return this.catapultDb.database.collection(collectionName)
-      .find(condition)
-      .sort(sorting)
-      .limit(count)
-      .toArray()
-			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
-	}
-
-	// Internal method to get namespaces up to (non-inclusive) the block height
-	// and the namespace ID, returning at max `numNamespaces` items.
-	namespacesFromHeightAndId(collectionName, height, id, numNamespaces) {
-		if (0 === numNamespaces)
-			return Promise.resolve([]);
-
-		// TODO(ahuszagh)
-		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const condition = { $or: [
-			{ 'namespace.startHeight': { $eq: height }, _id: { $lt: id } },
-			{ 'namespace.startHeight': { $lt: height } }
-		]};
-
-		return this.sortedNamespaces(collectionName, condition, numNamespaces)
-			.then(namespaces => Promise.resolve(namespaces));
-	}
-
-	// Internal method to get namespaces since (non-inclusive) the block height
-	// and the namespace ID, returning at max `numNamespaces` items.
-	namespacesSinceHeightAndId(collectionName, height, id, numNamespaces) {
-		if (0 === numNamespaces)
-			return Promise.resolve([]);
-
-		// TODO(ahuszagh)
-		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const condition = { $or: [
-			{ 'namespace.startHeight': { $eq: height }, _id: { $gt: id } },
-			{ 'namespace.startHeight': { $gt: height } }
-		]};
-
-		return this.sortedNamespaces(collectionName, condition, numNamespaces)
-			.then(namespaces => Promise.resolve(namespaces));
-	}
-
-	// region namespace retrieval
-
-	// Dummy method, to provide all namespaces from (not-including) the earliest.
-	// Always empty.
-	namespacesFromEarliest(collectionName, numNamespaces) {
-		return Promise.resolve([]);
-	}
-
-	// Get the earliest N namespaces since (and including) the earliest namespace.
-	namespacesSinceEarliest(collectionName, numNamespaces) {
-		if (0 === numNamespaces)
-			return Promise.resolve([]);
-
-		const height = convertToLong(0);
-		const id = new ObjectId('000000000000000000000000');
-		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
-	}
-
-	// Get the latest N namespaces from (and including) the latest namespace.
-	namespacesFromLatest(collectionName, numNamespaces) {
-		if (0 === numNamespaces)
-			return Promise.resolve([]);
-
-		return this.catapultDb.chainStatisticCurrent().then(chainStatistic => {
-			const one = convertToLong(1);
-			const height = chainStatistic.height.add(one);
-			const id = new ObjectId('000000000000000000000000');
-			return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
-		});
-	}
-
-	// Dummy method, to provide all namespaces since (not-including) the latest.
-	// Always empty.
-	namespacesSinceLatest(collectionName, numNamespaces) {
-		return Promise.resolve([]);
-	}
-
-	// Get namespaces up to (non-inclusive) a namespace object.
-	namespacesFromNamespace(collectionName, rawNamespace, numNamespaces) {
-		if (undefined === rawNamespace)
-			return undefined;
-		const height = rawNamespace.namespace.startHeight;
-		const id = rawNamespace._id;
-		return this.namespacesFromHeightAndId(collectionName, height, id, numNamespaces);
-	}
-
-	// Get namespaces since (non-inclusive) a namespace object.
-	namespacesSinceNamespace(collectionName, rawNamespace, numNamespaces) {
-		if (undefined === rawNamespace)
-			return undefined;
-		const height = rawNamespace.namespace.startHeight;
-		const id = rawNamespace._id;
-		return this.namespacesSinceHeightAndId(collectionName, height, id, numNamespaces);
-	}
-
-	// Get namespaces up to (non-inclusive) the namespace at id.
-	namespacesFromId(collectionName, id, numNamespaces) {
-		return this.rawNamespaceById(collectionName, id).then(namespace => {
-			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
-		});
-	}
-
-	// Get namespaces since (non-inclusive) the namespace at id.
-	namespacesSinceId(collectionName, id, numNamespaces) {
-		return this.rawNamespaceById(collectionName, id).then(namespace => {
-			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
-		});
-	}
-
-	// Get namespaces up to (non-inclusive) the namespace at object id.
-	namespacesFromObjectId(collectionName, id, numNamespaces) {
-		return this.rawNamespaceByObjectId(collectionName, id).then(namespace => {
-			return this.namespacesFromNamespace(collectionName, namespace, numNamespaces);
-		});
-	}
-
-	// Get namespaces since (non-inclusive) the namespace at object id.
-	namespacesSinceObjectId(collectionName, id, numNamespaces) {
-		return this.rawNamespaceByObjectId(collectionName, id).then(namespace => {
-			return this.namespacesSinceNamespace(collectionName, namespace, numNamespaces);
-		});
-	}
+  // region raw namespace retrieval
 
 	// Internal method: retrieve namespace by object ID.
   // Does not process internal _id.
@@ -195,6 +66,137 @@ class NamespaceDb {
 
 		return this.catapultDb.queryDocument(collectionName, conditions);
 	}
+
+  // endregion
+
+  // region well-known mosaic retrieval
+
+	// Internal method: retrieve network currency mosaic.
+	networkCurrencyMosaic() {
+		const currencyId = uint64.fromHex('85bbea6cc462b244');
+		return this.rawNamespaceById('namespaces', currencyId)
+			.then(namespace => namespace.namespace.alias.mosaicId);
+	}
+
+	// Internal method: retrieve network harvest mosaic.
+	networkHarvestMosaic() {
+		const harvestId = uint64.fromHex('941299b2b7e1291c');
+		return this.rawNamespaceById('namespaces', harvestId)
+			.then(namespace => namespace.namespace.alias.mosaicId);
+	}
+
+  // endregion
+
+  // region cursor namespace retrieval
+
+	// Internal method to find sorted namespaces from query.
+	sortedNamespaces(collectionName, condition, count) {
+		// Sort by descending startHeight, then by descending ID.
+		// Don't sort solely on ID, since it will break if 32-bit time wraps.
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const sorting = { 'namespace.startHeight': -1, _id: -1 };
+		return this.catapultDb.database.collection(collectionName)
+      .find(condition)
+      .sort(sorting)
+      .limit(count)
+      .toArray()
+			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
+	}
+
+	// Internal method to get namespaces up to (non-inclusive) the block height
+	// and the namespace ID, returning at max `count` items.
+	namespacesFrom(collectionName, height, id, count) {
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const condition = { $or: [
+			{ 'namespace.startHeight': { $eq: height }, _id: { $lt: id } },
+			{ 'namespace.startHeight': { $lt: height } }
+		]};
+
+		return this.sortedNamespaces(collectionName, condition, count)
+			.then(namespaces => Promise.resolve(namespaces));
+	}
+
+	// Internal method to get namespaces since (non-inclusive) the block height
+	// and the namespace ID, returning at max `count` items.
+	namespacesSince(collectionName, height, id, count) {
+		// TODO(ahuszagh)
+		//	WARNING: startHeight is not indexed: this must be fixed in production.
+		const condition = { $or: [
+			{ 'namespace.startHeight': { $eq: height }, _id: { $gt: id } },
+			{ 'namespace.startHeight': { $gt: height } }
+		]};
+
+		return this.sortedNamespaces(collectionName, condition, count)
+			.then(namespaces => Promise.resolve(namespaces));
+	}
+
+	namespacesFromEarliest(...args) {
+    return this.catapultDb.arrayFromEmpty();
+	}
+
+	namespacesSinceEarliest(...args) {
+		const method = 'namespacesSince';
+    const genArgs = () => [this.catapultDb.minLong(), this.catapultDb.minObjectId()];
+    return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	namespacesFromLatest(...args) {
+    const method = 'namespacesFrom';
+    const genArgs = () => [this.catapultDb.maxLong(), this.catapultDb.maxObjectId()];
+    return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	namespacesSinceLatest(...args) {
+    return this.catapultDb.arrayFromEmpty();
+	}
+
+	namespacesFromNamespace(...args) {
+		const method = 'namespacesFrom';
+    const genArgs = (namespace) => [namespace.namespace.startHeight, namespace._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	namespacesSinceNamespace(...args) {
+		const method = 'namespacesSince';
+    const genArgs = (namespace) => [namespace.namespace.startHeight, namespace._id];
+    return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	namespacesFromId(...args) {
+    return this.catapultDb.arrayFromId(this, 'namespacesFromNamespace', 'rawNamespaceById', ...args);
+	}
+
+	namespacesSinceId(...args) {
+    return this.catapultDb.arrayFromId(this, 'namespacesSinceNamespace', 'rawNamespaceById', ...args);
+	}
+
+	namespacesFromObjectId(...args) {
+    return this.catapultDb.arrayFromId(this, 'namespacesFromNamespace', 'rawNamespaceByObjectId', ...args);
+	}
+
+	namespacesSinceObjectId(...args) {
+    return this.catapultDb.arrayFromId(this, 'namespacesSinceNamespace', 'rawNamespaceByObjectId', ...args);
+	}
+
+	// endregion
+
+	// region account by namespace-linked mosaic retrieval
+
+	// TODO(ahuszagh) Need to implement this:
+// Add these fields to an account.
+//		Filter, and sort.
+//			{ $addFields: {
+//				// TODO(ahuszagh) Need to implement...
+//				'account.networkCurrencyBalance': 0,
+//				'account.networkHarvestBalance': 0,
+//			} },
+//	sortedAccountsByBalance(collectionName, height, importance, id, count)
+
+	// endregion
+
+	// region namespace retrieval
 
 	/**
 	 * Retrieves a namespace.

@@ -26,7 +26,7 @@ const catapult = require('catapult-sdk');
 const MongoDb = require('mongodb');
 
 const { address, EntityType } = catapult.model;
-const { ObjectId } = MongoDb;
+const { Long, ObjectId } = MongoDb;
 
 const isAggregateType = document => EntityType.aggregateComplete === document.transaction.type
 	|| EntityType.aggregateBonded === document.transaction.type;
@@ -117,6 +117,26 @@ const calculateSinceHeight = (height, chainHeight, numBlocks) => {
 	return { startHeight, endHeight };
 }
 
+// Implied method to add the importance field.
+// Calculates if importances is empty, if so, returns Long(0), otherwise,
+// extracts the field from the struct.
+const addFieldImportanceImpl = (field) => {
+	return {
+		$cond: {
+			if: { $gt: [ { $size: "$account.importances" }, 0 ] },
+			then: {
+				$let: {
+					vars: {
+						lastImportance: { $arrayElemAt: [ "$account.importances", -1 ] }
+					},
+					in: `$$lastImportance.${field}`
+				}
+			},
+			else: { $toLong: 0 }
+		}
+	};
+}
+
 class CatapultDb {
 	// region construction / connect / disconnect
 
@@ -147,6 +167,30 @@ class CatapultDb {
 			this.client = undefined;
 			this.database = undefined;
 		});
+	}
+
+	// endregion
+
+	// region storage helpers
+
+	// Get the minimum signed value for a long.
+	minLong() {
+		return new Long(0, 0);
+	}
+
+	// Get the maximum signed value for a long.
+	maxLong() {
+		return new Long(0XFFFFFFFF, 0X7FFFFFFF);
+	}
+
+	// Get the minimum object ID value.
+	minObjectId() {
+		return new ObjectId('000000000000000000000000');
+	}
+
+	// Get the maximum object ID value.
+	maxObjectId() {
+		return new ObjectId('FFFFFFFFFFFFFFFFFFFFFFFF');
 	}
 
 	// endregion
@@ -191,26 +235,45 @@ class CatapultDb {
 			.toArray();
 	}
 
-	// TODO(ahuszagh)
-	//	Remove sortedAggregateCollection
-	//	Replace with direct query methods we need.
+	// endregion
 
-	// Retrieve sorted items using an aggregate find/match as an array.
-	sortedAggregateCollection(collectionName, aggregation, projection, sorting, count) {
-		// TODO(ahuszagh) These steps should run conditionally....
-		// Only if they're present...
-		const collection = this.database.collection(collectionName);
-		return collection
-			.aggregate(aggregation)
-			.sort(sorting)
-			.project(projection)
-			.limit(count)
-			.toArray();
+	// region cursor retrieval helpers
+
+	// Get 0 records as a promise.
+	arrayFromEmpty () {
+		return Promise.resolve([]);
+	}
+
+	// Get the N records from (and including) an absolute duration.
+	arrayFromAbsolute(db, method, genArgs, collectionName, ...args) {
+		// Count is always provided as the last argument.
+		if (0 === args[args.length - 1])
+			return this.arrayFromEmpty();
+		const methodArgs = genArgs();
+		return db[method](collectionName, ...methodArgs, ...args);
+	}
+
+	// Get records relative to (non-inclusive) a provided record.
+	arrayFromRecord(db, method, genArgs, collectionName, record, ...args) {
+		if (undefined === record)
+			return undefined;
+		// Count is always provided as the last argument.
+		if (0 === args[args.length - 1])
+			return this.arrayFromEmpty();
+		const methodArgs = genArgs(record);
+		return db[method](collectionName, ...methodArgs, ...args);
+	}
+
+	// Get records relative to (non-inclusive) a record looked up by an ID.
+	arrayFromId(db, arrayMethod, idMethod, collectionName, id, ...args) {
+		return db[idMethod](collectionName, id).then(record => {
+			return db[arrayMethod](collectionName, record, ...args);
+		});
 	}
 
 	// endregion
 
-	// region retrieval
+	// region chain retrieval
 
 	/**
 	 * Retrieves sizes of database collections.
@@ -233,372 +296,9 @@ class CatapultDb {
 			.then(chainStatistic => chainStatistic.current);
 	}
 
-// TODO(ahuszagh) Need to think of how to do this.
-//	First, need to add a addFields aggregate step.
-//	Then, need to match aggregate step.
-//	Then, need a convert step.
-// 	Then, need to sort.
-//	Then, need to project to remove the added fields.
+	// end retrieval
 
-	// Internal method to find sorted accounts by balance from query.
-	sortedAccountsByBalance(collectionName, match, count) {
-
-// 	WANTED:
-//		This format:
-//  { account:
-//     { address: [Binary],
-//       addressHeight: [Long],
-//       publicKey: [Binary],
-//       publicKeyHeight: [Long],
-//       accountType: 0,
-//       linkedAccountKey: [Binary],
-//       importances: [],
-//       activityBuckets: [],
-//       mosaics: [Array] } }
-//
-//	What we actually get:
-//  { account:
-//     { address: [Binary],
-//       addressHeight: 1,
-//       publicKey: [Binary],
-//       publicKeyHeight: 0,
-//       accountType: 0,
-//       linkedAccountKey: [Binary],
-//       importances: [],
-//       activityBuckets: [],
-//       mosaics: [Array] } }
-
-	// TODO(ahuszagh) Change this slightly
-		const aggregation = [
-			{ $addFields: { 'account.harvestedBlocks': { $size: "$account.activityBuckets" } } },
-			{ $addFields: { 'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" } } },
-			// TODO(ahuszagh)
-			//	First, need to let to bind the account.importances or a default.
-			//	Then, need to access this.
-			{ $addFields: {
-//				$let: {
-//	        vars: {
-//	          x: {
-//	          	$cond: {
-//	          		if: { $gt: [ { $size: "$account.importances" }, 0 ] },
-//          			then: { $arrayElemAt: [ "$account.importances", -1 ] },
-//	          		else: {
-//	          			importance: { $toLong: 0 },
-//	          			importanceHeight: { $toLong: 0 }
-//	          		}
-//	          	}
-//	          }
-//	        },
-//	        in: {
-//	          'account.importance': "$$x.importance",
-//	          'account.importanceHeight': "$$x.importanceHeight",
-//	        }
-//	      }
-			} },
-
-//			{ $addFields: { 'account.importance': {
-//				// TODO(ahuszagh) This sucks... Lols...
-//				// use
-//				$cond: {
-//					if: { $gt: [ { $size: "$account.importances" }, 0 ] },
-//						// TODO(ahuszagh) How do I get the field I want here???
-//					then: { $arrayElemAt: [ "$account.importances", -1 ] },
-//					else: { $toLong: 0 }
-//				}
-//			} } },
-		];
-//		const sorting = { _id: -1 };
-		return this.database.collection(collectionName)
-			.aggregate(aggregation, { promoteLongs: false })
-			//.sort(sorting)
-			//.project(projection)
-			.limit(count)
-			.toArray()
-			.then(this.sanitizer.deleteIds);
-	}
-
-//	// Internal method to find sorted accounts by importance from query.
-//	sortedAccountsByImportance(collectionName, match, count) {
-//		// TODO(ahuszagh) This needs to be done by....
-//		const sorting = {};	// TODO(ahuszagh) Implement.
-//		return this.sortedAccounts(collectionName, match, sorting, count)
-//			.then(this.sanitizer.deleteIds)
-//	}
-//
-//	// Internal method to find sorted accounts by harvested blocks from query.
-//	sortedAccountsByHarvestedBlocks(collectionName, match, count) {
-//		const sorting = {};	// TODO(ahuszagh) Implement.
-//		return this.sortedAccounts(collectionName, match, sorting, count)
-//			.then(this.sanitizer.deleteIds)
-//	}
-//
-//	// Internal method to find sorted accounts by harvested fees from query.
-//	sortedAccountsByHarvestedFees(collectionName, match, count) {
-//		const sorting = {};	// TODO(ahuszagh) Implement.
-//		return this.sortedAccounts(collectionName, match, sorting, count)
-//			.then(this.sanitizer.deleteIds)
-//	}
-
-	// Internal method to find sorted transactions from query.
-	sortedTransactions(collectionName, condition, count) {
-		const projection = { 'meta.addresses': 0 };
-		const sorting = { 'meta.height': -1, 'meta.index': -1 };
-		return this.database.collection(collectionName)
-			.find(condition)
-			.sort(sorting)
-			.project(projection)
-			.limit(count)
-			.toArray()
-			.then(this.sanitizer.copyAndDeleteIds);
-	}
-
-	// Internal method to get transactions up to (non-inclusive) the block height
-	// and transaction index, returning at max `numTransactions` items.
-	transactionsFromHeightAndIndex(collectionName, height, index, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
-			{ $or: [
-				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
-				{ 'meta.height': { $lt: height } }
-			]},
-		]};
-
-		return this.sortedTransactions(collectionName, condition, numTransactions)
-			.then(transactions => Promise.resolve(transactions));
-	}
-
-	// Internal method to get transactions since (non-inclusive) the block height
-	// and transaction index, returning at max `numTransactions` items.
-	transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
-			{ $or: [
-				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
-				{ 'meta.height': { $gt: height } }
-			]},
-		]};
-
-		return this.sortedTransactions(collectionName, condition, numTransactions)
-			.then(transactions => Promise.resolve(transactions));
-	}
-
-	// Dummy method, to provide all transactions from (not-including) the earliest.
-	// Always empty.
-	transactionsFromEarliest(collectionName, numTransactions) {
-		return Promise.resolve([]);
-	}
-
-	// Get the earliest N transactions since (and including) the earliest transaction.
-	transactionsSinceEarliest(collectionName, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const height = convertToLong(0);
-		return this.transactionsSinceHeightAndIndex(collectionName, height, -1, numTransactions);
-	}
-
-	// Get the latest N transactions from (and including) the latest transaction.
-	transactionsFromLatest(collectionName, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		return this.chainStatisticCurrent().then(chainStatistic => {
-			const one = convertToLong(1);
-			const height = chainStatistic.height.add(one);
-			return this.transactionsFromHeightAndIndex(collectionName, height, 0, numTransactions);
-		});
-	}
-
-	// Dummy method, to provide all transactions since (not-including) the latest.
-	// Always empty.
-	transactionsSinceLatest(collectionName, numTransactions) {
-		return Promise.resolve([]);
-	}
-
-	// Get transactions up to (non-inclusive) a transaction object.
-	transactionsFromTransaction(collectionName, rawTransaction, numTransactions) {
-		if (undefined === rawTransaction)
-			return undefined;
-		const height = rawTransaction.meta.height;
-		const index = rawTransaction.meta.index;
-		return this.transactionsFromHeightAndIndex(collectionName, height, index, numTransactions);
-	}
-
-	// Get transactions since (non-inclusive) a transaction object.
-	transactionsSinceTransaction(collectionName, rawTransaction, numTransactions) {
-		if (undefined === rawTransaction)
-			return undefined;
-		const height = rawTransaction.meta.height;
-		const index = rawTransaction.meta.index;
-		return this.transactionsSinceHeightAndIndex(collectionName, height, index, numTransactions);
-	}
-
-	// Internal method: retrieve transaction by hash.
-	// Does not process internal _id.
-  rawTransactionByHash(collectionName, hash) {
-		const condition = { 'meta.hash': { $eq: Buffer.from(hash) } };
-		return this.queryDocument(collectionName, condition);
-  }
-
-	// Get transactions up to (non-inclusive) the transaction at hash.
-	transactionsFromHash(collectionName, hash, numTransactions) {
-		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
-			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
-		});
-	}
-
-	// Get transactions since (non-inclusive) the transaction at hash.
-	transactionsSinceHash(collectionName, hash, numTransactions) {
-		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
-			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
-		});
-	}
-
-	// Internal method: retrieve transaction by ID.
-	// Does not process internal _id.
-  rawTransactionById(collectionName, id) {
-		const transactionId = new ObjectId(id);
-		const condition = { _id: { $eq: transactionId } };
-		return this.queryDocument(collectionName, condition)
-			.then(this.sanitizer.copyAndDeleteId);
-  }
-
-	// Get transactions up to (non-inclusive) the transaction at id.
-	transactionsFromId(collectionName, id, numTransactions) {
-		return this.rawTransactionById(collectionName, id).then(transaction => {
-			return this.transactionsFromTransaction(collectionName, transaction, numTransactions);
-		});
-	}
-
-	// Get transactions since (non-inclusive) the transaction at id.
-	transactionsSinceId(collectionName, id, numTransactions) {
-		return this.rawTransactionById(collectionName, id).then(transaction => {
-			return this.transactionsSinceTransaction(collectionName, transaction, numTransactions);
-		});
-	}
-
-	// Internal method to get transactions filtered by type up to (non-inclusive) the block height
-	// and transaction index, returning at max `numTransactions` items.
-	transactionsByTypeFromHeightAndIndex(collectionName, height, index, type, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
-			{ 'transaction.type': { $eq: type } },
-			{ $or: [
-				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
-				{ 'meta.height': { $lt: height } }
-			]},
-		]};
-
-		return this.sortedTransactions(collectionName, condition, numTransactions)
-			.then(transactions => Promise.resolve(transactions));
-	}
-
-	// Internal method to get transactions filtered by type since (non-inclusive) the block height
-	// and transaction index, returning at max `numTransactions` items.
-	transactionsByTypeSinceHeightAndIndex(collectionName, height, index, type, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
-			{ 'transaction.type': { $eq: type } },
-			{ $or: [
-				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
-				{ 'meta.height': { $gt: height } }
-			]},
-		]};
-
-		return this.sortedTransactions(collectionName, condition, numTransactions)
-			.then(transactions => Promise.resolve(transactions));
-	}
-
-	// Dummy method, to provide all transactions filtered by type from (not-including) the earliest.
-	// Always empty.
-	transactionsByTypeFromEarliest(collectionName, type, numTransactions) {
-		return Promise.resolve([]);
-	}
-
-	// Get the earliest N transactions filtered by type since (and including) the earliest transaction.
-	transactionsByTypeSinceEarliest(collectionName,type, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		const height = convertToLong(0);
-		return this.transactionsByTypeSinceHeightAndIndex(collectionName, height, -1, type, numTransactions);
-	}
-
-	// Get the latest N transactions filtered by type from (and including) the latest transaction.
-	transactionsByTypeFromLatest(collectionName, type, numTransactions) {
-		if (0 === numTransactions)
-			return Promise.resolve([]);
-
-		return this.chainStatisticCurrent().then(chainStatistic => {
-			const one = convertToLong(1);
-			const height = chainStatistic.height.add(one);
-			return this.transactionsByTypeFromHeightAndIndex(collectionName, height, 0, type, numTransactions);
-		});
-	}
-
-	// Dummy method, to provide all transactions filtered by type since (not-including) the latest.
-	// Always empty.
-	transactionsByTypeSinceLatest(collectionName, type, numTransactions) {
-		return Promise.resolve([]);
-	}
-
-	// Get transactions filtered by type up to (non-inclusive) a transaction object.
-	transactionsByTypeFromTransaction(collectionName, rawTransaction, type, numTransactions) {
-  	if (undefined === rawTransaction)
-      return undefined;
-		const height = rawTransaction.meta.height;
-		const index = rawTransaction.meta.index;
-		return this.transactionsByTypeFromHeightAndIndex(collectionName, height, index, type, numTransactions);
-	}
-
-	// Get transactions filtered by type since (non-inclusive) a transaction object.
-	transactionsByTypeSinceTransaction(collectionName, rawTransaction, type, numTransactions) {
-  	if (undefined === rawTransaction)
-      return undefined;
-		const height = rawTransaction.meta.height;
-		const index = rawTransaction.meta.index;
-		return this.transactionsByTypeSinceHeightAndIndex(collectionName, height, index, type, numTransactions);
-	}
-
-	// Get transactions filtered by type up to (non-inclusive) the transaction at hash.
-	transactionsByTypeFromHash(collectionName, hash, type, numTransactions) {
-		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
-			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
-		});
-	}
-
-	// Get transactions filtered by type since (non-inclusive) the transaction at hash.
-	transactionsByTypeSinceHash(collectionName, hash, type, numTransactions) {
-		return this.rawTransactionByHash(collectionName, hash).then(transaction => {
-			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
-		});
-	}
-
-	// Get transactions filtered by type up to (non-inclusive) the transaction at id.
-	transactionsByTypeFromId(collectionName, id, type, numTransactions) {
-		return this.rawTransactionById(collectionName, id).then(transaction => {
-			return this.transactionsByTypeFromTransaction(collectionName, transaction, type, numTransactions);
-		});
-	}
-
-	// Get transactions filtered by type since (non-inclusive) the transaction at id.
-	transactionsByTypeSinceId(collectionName, id, type, numTransactions) {
-		return this.rawTransactionById(collectionName, id).then(transaction => {
-			return this.transactionsByTypeSinceTransaction(collectionName, transaction, type, numTransactions);
-		});
-	}
+	// region block retrieval
 
 	blockAtHeight(height) {
 		return this.queryDocument(
@@ -634,6 +334,10 @@ class CatapultDb {
 		});
 	}
 
+	// endregion
+
+  // region cursor block retrieval
+
 	// Internal method to find sorted blocks from query.
 	sortedBlocks(collectionName, condition, count) {
 		const projection = { 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 };
@@ -649,32 +353,36 @@ class CatapultDb {
 
 	// Updated version of blocksFrom.
 	// Gets blocks up to (non-inclusive) the height provided,
-	// returning at max `numBlocks` items.
-	blocksFromHeight(collectionName, height, numBlocks) {
-		if (0 === numBlocks)
+	// returning at max `count` items.
+	blocksFromHeight(collectionName, height, count) {
+		if (0 === count)
 			return Promise.resolve([]);
 
 		return this.chainStatisticCurrent().then(chainStatistic => {
-			const { startHeight, endHeight } = calculateFromHeight(convertToLong(height), chainStatistic.height, numBlocks);
+			const { startHeight, endHeight } = calculateFromHeight(convertToLong(height), chainStatistic.height, count);
 			const condition = { 'block.height': { $gte: startHeight, $lt: endHeight } };
-			return this.sortedBlocks(collectionName, condition, numBlocks)
+			return this.sortedBlocks(collectionName, condition, count)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}
 
 	// Gets blocks starting from (non-inclusive) the height provided,
-	// returning at max `numBlocks` items.
-	blocksSinceHeight(collectionName, height, numBlocks) {
-		if (0 === numBlocks)
+	// returning at max `count` items.
+	blocksSinceHeight(collectionName, height, count) {
+		if (0 === count)
 			return Promise.resolve([]);
 
 		return this.chainStatisticCurrent().then(chainStatistic => {
-			const { startHeight, endHeight } = calculateSinceHeight(convertToLong(height), chainStatistic.height, numBlocks);
+			const { startHeight, endHeight } = calculateSinceHeight(convertToLong(height), chainStatistic.height, count);
 			const condition = { 'block.height': { $gt: startHeight, $lte: endHeight } };
-      return this.sortedBlocks(collectionName, condition, numBlocks)
+      return this.sortedBlocks(collectionName, condition, count)
 				.then(blocks => Promise.resolve(blocks));
 		});
 	}
+
+	// endregion
+
+	// region transaction retrieval
 
 	queryDependentDocuments(collectionName, aggregateIds) {
 		if (0 === aggregateIds.length)
@@ -789,6 +497,207 @@ class CatapultDb {
 			.then(this.sanitizer.deleteIds);
 	}
 
+	// endregion
+
+  // region raw transaction retrieval
+
+	// Internal method: retrieve transaction by hash.
+	// Does not process internal _id.
+  rawTransactionByHash(collectionName, hash) {
+		const condition = { 'meta.hash': { $eq: Buffer.from(hash) } };
+		return this.queryDocument(collectionName, condition);
+  }
+
+	// Internal method: retrieve transaction by ID.
+	// Does not process internal _id.
+  rawTransactionById(collectionName, id) {
+		const transactionId = new ObjectId(id);
+		const condition = { _id: { $eq: transactionId } };
+		return this.queryDocument(collectionName, condition)
+			.then(this.sanitizer.copyAndDeleteId);
+  }
+
+	// endregion
+
+  // region cursor transaction retrieval
+
+	// Internal method to find sorted transactions from query.
+	sortedTransactions(collectionName, condition, count) {
+		const projection = { 'meta.addresses': 0 };
+		const sorting = { 'meta.height': -1, 'meta.index': -1 };
+		return this.database.collection(collectionName)
+			.find(condition)
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.copyAndDeleteIds);
+	}
+
+	// Internal method to get transactions up to (non-inclusive) the block height
+	// and transaction index, returning at max `count` items.
+	transactionsFrom(collectionName, height, index, count) {
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
+				{ 'meta.height': { $lt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, count)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Internal method to get transactions since (non-inclusive) the block height
+	// and transaction index, returning at max `count` items.
+	transactionsSince(collectionName, height, index, count) {
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
+				{ 'meta.height': { $gt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, count)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	transactionsFromEarliest(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	transactionsSinceEarliest(...args) {
+		const method = 'transactionsSince';
+		const genArgs = () => [this.minLong(), -1];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsFromLatest(...args) {
+		const method = 'transactionsFrom';
+		const genArgs = () => [this.maxLong(), 0];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsSinceLatest(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	transactionsFromTransaction(...args) {
+		const method = 'transactionsFrom';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsSinceTransaction(...args) {
+		const method = 'transactionsSince';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsFromHash(...args) {
+		return this.arrayFromId(this, 'transactionsFromTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsSinceHash(...args) {
+		return this.arrayFromId(this, 'transactionsSinceTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsFromId(...args) {
+		return this.arrayFromId(this, 'transactionsFromTransaction', 'rawTransactionById', ...args);
+	}
+
+	transactionsSinceId(...args) {
+		return this.arrayFromId(this, 'transactionsSinceTransaction', 'rawTransactionById', ...args);
+	}
+
+	// endregion
+
+  // region cursor transaction by type retrieval
+
+	// Internal method to get transactions filtered by type up to (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsByTypeFrom(collectionName, height, index, type, count) {
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
+				{ 'meta.height': { $lt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, count)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	// Internal method to get transactions filtered by type since (non-inclusive) the block height
+	// and transaction index, returning at max `numTransactions` items.
+	transactionsByTypeSince(collectionName, height, index, type, count) {
+		const condition = { $and: [
+			{ 'meta.aggregateId': { $exists: false } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
+				{ 'meta.height': { $gt: height } }
+			]},
+		]};
+
+		return this.sortedTransactions(collectionName, condition, count)
+			.then(transactions => Promise.resolve(transactions));
+	}
+
+	transactionsByTypeFromEarliest(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	transactionsByTypeSinceEarliest(...args) {
+		const method = 'transactionsByTypeSince';
+		const genArgs = () => [this.minLong(), -1];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeFromLatest(...args) {
+		const method = 'transactionsByTypeFrom';
+		const genArgs = () => [this.maxLong(), 0];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeSinceLatest(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	transactionsByTypeFromTransaction(...args) {
+		const method = 'transactionsByTypeFrom';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeSinceTransaction(...args) {
+		const method = 'transactionsByTypeSince';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeFromHash(...args) {
+		return this.arrayFromId(this, 'transactionsByTypeFromTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsByTypeSinceHash(...args) {
+		return this.arrayFromId(this, 'transactionsByTypeSinceTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsByTypeFromId(...args) {
+		return this.arrayFromId(this, 'transactionsByTypeFromTransaction', 'rawTransactionById', ...args);
+	}
+
+	transactionsByTypeSinceId(...args) {
+		return this.arrayFromId(this, 'transactionsByTypeSinceTransaction', 'rawTransactionById', ...args);
+	}
+
+	// endregion
+
 	// region transaction retrieval for account
 
 	accountTransactionsAll(publicKey, id, pageSize, ordering) {
@@ -838,6 +747,378 @@ class CatapultDb {
 				delete account.importances;
 				return accountWithMetadata;
 			}));
+	}
+
+	// endregion
+
+	// region cursor account helpers
+
+	// Helper methods to add importance field.
+	addFieldImportance() {
+		return addFieldImportanceImpl('value');
+	}
+
+	// Helper methods to add importanceHeight field.
+	addFieldImportanceHeight() {
+		return addFieldImportanceImpl('height');
+	}
+
+	// Retrieve account by address with custom fields added and projected.
+	rawAccountByAddress(collectionName, address, addFields, projection) {
+		const aggregation = [
+			{ $match: { 'account.address': { $eq: Buffer.from(address) } } },
+			addFields
+		];
+		return this.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.project(projection)
+			.limit(1)
+			.toArray()
+			.then(accounts => Promise.resolve(accounts[0]));
+	}
+
+	// Since the public key isn't unique for the network's private key,
+	// and the calculation doesn't generate the right address,
+	// this may not work for all data, but it's accurate for everything else.
+	publicKeyToAddress(publicKey) {
+		return address.publicKeyToAddress(publicKey, this.networkId);
+	}
+
+	// endregion
+
+	// region cursor account by importance retrieval
+
+	rawAccountWithImportanceByAddress(collectionName, address) {
+		const addFields = { $addFields: {
+			'account.importance': this.addFieldImportance(),
+			'account.importanceHeight': this.addFieldImportanceHeight()
+		} };
+		const projection = { 'account.importances': 0 };
+		return this.rawAccountByAddress(collectionName, address, addFields, projection);
+	}
+
+	rawAccountWithImportanceByPublicKey(collectionName, publicKey) {
+		const address = this.publicKeyToAddress(publicKey);
+		return this.rawAccountWithImportanceByAddress(collectionName, address);
+	}
+
+	// Internal method to find sorted accounts by importance from query.
+	sortedAccountsByImportance(collectionName, match, count) {
+		const aggregation = [
+			{ $addFields: {
+				'account.importance': this.addFieldImportance(),
+				'account.importanceHeight': this.addFieldImportanceHeight()
+			} },
+			{ $match: match }
+		];
+		// Need secondary public key height and ID height to sort by when the
+		// account's public key was known to network.
+		const sorting = { 'account.importance': -1, 'account.publicKeyHeight': -1, _id: -1 };
+		const projection = { 'account.importances': 0 };
+
+		return this.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.deleteIds);
+	}
+
+	// Generate an account match condition from a field, an ordering,
+	// and the publicKeyHeight and the object ID.
+	accountMatchCondition(field, ordering, value, height, id) {
+		// Match if the account field is less than the provided field
+		// If the fields are equal, match if the height is less than the
+		// public key height. If equal, match if the ID is less than the provided ID.
+		return { $or: [
+			{ [`account.${field}`]: { [ordering]: value } },
+			{ $and: [
+				{ [`account.${field}`]: { $eq: value } },
+				{ $or: [
+					{ 'meta.publicKeyHeight': { $eq: height }, _id: { [ordering]: id } },
+					{ 'meta.publicKeyHeight': { [ordering]: height } }
+				]},
+			]},
+		]};
+	}
+
+	// Internal method: get accounts up to (non-inclusive) the account with importance, height,
+	// and ID, returning at max `numAccounts` items.
+	accountsByImportanceFrom(collectionName, importance, height, id, numAccounts) {
+		const match = this.accountMatchCondition('importance', '$lt', importance, height, id);
+		return this.sortedAccountsByImportance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	// Internal method: get accounts since (non-inclusive) the account with importance, height,
+	// and ID, returning at max `numAccounts` items.
+	accountsByImportanceSince(collectionName, importance, height, id, numAccounts) {
+		const match = this.accountMatchCondition('importance', '$gt', importance, height, id);
+		return this.sortedAccountsByImportance(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByImportanceFromLeast(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByImportanceSinceLeast(...args) {
+		const method = 'accountsByImportanceSince';
+		const genArgs = () => [this.minLong(), this.minLong(), this.minObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByImportanceFromMost(...args) {
+		const method = 'accountsByImportanceFrom';
+		const genArgs = () => [this.maxLong(), this.maxLong(), this.maxObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByImportanceSinceMost(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByImportanceFromAccount(...args) {
+		const method = 'accountsByImportanceFrom';
+    const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByImportanceSinceAccount(...args) {
+		const method = 'accountsByImportanceFrom';
+		const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByImportanceFromAddress(...args) {
+		return this.arrayFromId(this, 'accountsByImportanceFromAccount', 'rawAccountWithImportanceByAddress', ...args);
+	}
+
+	accountsByImportanceSinceAddress(...args) {
+		return this.arrayFromId(this, 'accountsByImportanceSinceAccount', 'rawAccountWithImportanceByAddress', ...args);
+	}
+
+	accountsByImportanceFromPublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByImportanceFromAccount', 'rawAccountWithImportanceByPublicKey', ...args);
+	}
+
+	accountsByImportanceSincePublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByImportanceSinceAccount', 'rawAccountWithImportanceByPublicKey', ...args);
+	}
+
+	// endregion
+
+	// region cursor account by harvested blocks retrieval
+
+	rawAccountWithHarvestedBlocksByAddress(collectionName, address) {
+		const addFields = { $addFields: {
+			'account.importance': this.addFieldImportance(),
+			'account.importanceHeight': this.addFieldImportanceHeight(),
+			'account.harvestedBlocks': { $size: "$account.activityBuckets" }
+		} };
+		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0 };
+		return this.rawAccountByAddress(collectionName, address, addFields, projection);
+	}
+
+	rawAccountWithHarvestedBlocksByPublicKey(collectionName, publicKey) {
+		const address = this.publicKeyToAddress(publicKey);
+		return this.rawAccountWithHarvestedBlocksByAddress(collectionName, address);
+	}
+
+	// Internal method to find sorted accounts by harvested blocks from query.
+	sortedAccountsByHarvestedBlocks(collectionName, match, count) {
+		const aggregation = [
+			{ $addFields: {
+				'account.importance': this.addFieldImportance(),
+				'account.importanceHeight': this.addFieldImportanceHeight(),
+				'account.harvestedBlocks': { $size: "$account.activityBuckets" }
+			} },
+			{ $match: match }
+		];
+		// Need secondary public key height and ID height to sort by when the
+		// account's public key was known to network.
+		const sorting = { 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
+		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0 };
+
+		return this.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.deleteIds);
+	}
+
+	// Internal method: get accounts up to (non-inclusive), returning at max `numAccounts` items.
+	accountsByHarvestedBlocksFrom(collectionName, harvestedBlocks, height, id, numAccounts) {
+		const match = this.accountMatchCondition('harvestedBlocks', '$lt', harvestedBlocks, height, id);
+		return this.sortedAccountsByHarvestedBlocks(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	// Internal method: get accounts since (non-inclusive), returning at max `numAccounts` items.
+	accountsByHarvestedBlocksSince(collectionName, harvestedBlocks, height, id, numAccounts) {
+		const match = this.accountMatchCondition('harvestedBlocks', '$gt', harvestedBlocks, height, id);
+		return this.sortedAccountsByHarvestedBlocks(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByHarvestedBlocksFromLeast(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByHarvestedBlocksSinceLeast(...args) {
+		const method = 'accountsByHarvestedBlocksSince';
+		const genArgs = () => [this.minLong(), this.minLong(), this.minObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedBlocksFromMost(...args) {
+		const method = 'accountsByHarvestedBlocksFrom';
+		const genArgs = () => [this.maxLong(), this.maxLong(), this.maxObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedBlocksSinceMost(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByHarvestedBlocksFromAccount(...args) {
+		const method = 'accountsByHarvestedBlocksFrom';
+    const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedBlocksSinceAccount(...args) {
+		const method = 'accountsByHarvestedBlocksFrom';
+		const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedBlocksFromAddress(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedBlocksFromAccount', 'rawAccountWithHarvestedBlocksByAddress', ...args);
+	}
+
+	accountsByHarvestedBlocksSinceAddress(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedBlocksSinceAccount', 'rawAccountWithHarvestedBlocksByAddress', ...args);
+	}
+
+	accountsByHarvestedBlocksFromPublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedBlocksFromAccount', 'rawAccountWithHarvestedBlocksByPublicKey', ...args);
+	}
+
+	accountsByHarvestedBlocksSincePublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedBlocksSinceAccount', 'rawAccountWithHarvestedBlocksByPublicKey', ...args);
+	}
+
+	// endregion
+
+	// region cursor account by harvested fees retrieval
+
+	rawAccountWithHarvestedFeesByAddress(collectionName, address) {
+		const addFields = { $addFields: {
+			'account.importance': this.addFieldImportance(),
+			'account.importanceHeight': this.addFieldImportanceHeight(),
+			'account.harvestedBlocks': { $size: "$account.activityBuckets" },
+			'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" }
+		} };
+		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0, 'account.harvestedFees': 0 };
+		return this.rawAccountByAddress(collectionName, address, addFields, projection);
+	}
+
+	rawAccountWithHarvestedFeesByPublicKey(collectionName, publicKey) {
+		const address = this.publicKeyToAddress(publicKey);
+		return this.rawAccountWithHarvestedFeesByAddress(collectionName, address);
+	}
+
+	// Internal method to find sorted accounts by harvested fees from query.
+	sortedAccountsByHarvestedFees(collectionName, match, count) {
+		const aggregation = [
+			{ $addFields: {
+				'account.importance': this.addFieldImportance(),
+				'account.importanceHeight': this.addFieldImportanceHeight(),
+				'account.harvestedBlocks': { $size: "$account.activityBuckets" },
+				'account.harvestedFees': { $sum: "$account.activityBuckets.totalFeesPaid" }
+			} },
+			{ $match: match }
+		];
+		// Sort by harvested blocks after to break ties: more attempted harvested,
+		// should score higher.
+		// Need secondary public key height and ID height to sort by when the
+		// account's public key was known to network.
+		const sorting = { 'account.harvestedFees': -1, 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
+		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0, 'account.harvestedFees': 0 };
+
+		return this.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.sanitizer.deleteIds);
+	}
+
+	// Internal method: get accounts up to (non-inclusive), returning at max `numAccounts` items.
+	accountsByHarvestedFeesFrom(collectionName, harvestedFees, height, id, numAccounts) {
+		const match = this.accountMatchCondition('harvestedFees', '$lt', harvestedFees, height, id);
+		return this.sortedAccountsByHarvestedFees(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	// Internal method: get accounts since (non-inclusive), returning at max `numAccounts` items.
+	accountsByHarvestedFeesSince(collectionName, harvestedFees, height, id, numAccounts) {
+		const match = this.accountMatchCondition('harvestedFees', '$gt', harvestedFees, height, id);
+		return this.sortedAccountsByHarvestedFees(collectionName, match, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByHarvestedFeesFromLeast(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByHarvestedFeesSinceLeast(...args) {
+		const method = 'accountsByHarvestedFeesSince';
+		const genArgs = () => [this.minLong(), this.minLong(), this.minObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedFeesFromMost(...args) {
+		const method = 'accountsByHarvestedFeesFrom';
+		const genArgs = () => [this.maxLong(), this.maxLong(), this.maxObjectId()];
+		return this.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedFeesSinceMost(...args) {
+		return this.arrayFromEmpty();
+	}
+
+	accountsByHarvestedFeesFromAccount(...args) {
+		const method = 'accountsByHarvestedFeesFrom';
+    const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedFeesSinceAccount(...args) {
+		const method = 'accountsByHarvestedFeesFrom';
+		const genArgs = (account) => [account.account.importance, account.account.publicKeyHeight, account._id];
+    return this.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByHarvestedFeesFromAddress(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedFeesFromAccount', 'rawAccountWithHarvestedFeesByAddress', ...args);
+	}
+
+	accountsByHarvestedFeesSinceAddress(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedFeesSinceAccount', 'rawAccountWithHarvestedFeesByAddress', ...args);
+	}
+
+	accountsByHarvestedFeesFromPublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedFeesFromAccount', 'rawAccountWithHarvestedFeesByPublicKey', ...args);
+	}
+
+	accountsByHarvestedFeesSincePublicKey(...args) {
+		return this.arrayFromId(this, 'accountsByHarvestedFeesSinceAccount', 'rawAccountWithHarvestedFeesByPublicKey', ...args);
 	}
 
 	// endregion

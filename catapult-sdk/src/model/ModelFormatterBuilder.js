@@ -48,6 +48,7 @@ class ModelFormatterBuilder {
 			'transactionStatus',
 
 			// Internal: for debugging only TODO(ahuszagh) Remove.
+			'accountAddress',
 			'blockHeight',
 			'transactionHash',
 		]);

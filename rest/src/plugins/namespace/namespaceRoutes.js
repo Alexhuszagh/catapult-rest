@@ -228,5 +228,7 @@ module.exports = {
 			const resultType = 'namespaceId';
       return getNamespaces(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
+
+    // TODO(ahuszagh) Need to add account routes filtered for namespaces here...
 	}
 };

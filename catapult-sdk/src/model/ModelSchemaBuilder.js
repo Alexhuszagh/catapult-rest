@@ -174,6 +174,10 @@ class ModelSchemaBuilder {
 
 			// region internal: for debugging only TODO(ahuszagh) Remove.
 
+			accountAddress: {
+				address: ModelType.binary
+			},
+
 			blockHeight: {
 				height: ModelType.uint64
 			},

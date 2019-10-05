@@ -38,6 +38,7 @@ module.exports = {
 	storageInfo: 'storageInfo',
 
 	// Internal: for debugging only TODO(ahuszagh) Remove.
+	accountAddress: 'accountAddress',
 	blockHeight: 'blockHeight',
 	transactionHash: 'transactionHash',
 };
