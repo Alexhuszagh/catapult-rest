@@ -537,8 +537,9 @@ class CatapultDb {
 	// Internal method to get transactions up to (non-inclusive) the block height
 	// and transaction index, returning at max `count` items.
 	transactionsFrom(collectionName, height, index, count) {
+		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
+			{ 'meta.aggregateId': { $exists: isAggregate } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
 				{ 'meta.height': { $lt: height } }
@@ -552,8 +553,9 @@ class CatapultDb {
 	// Internal method to get transactions since (non-inclusive) the block height
 	// and transaction index, returning at max `count` items.
 	transactionsSince(collectionName, height, index, count) {
+		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
+			{ 'meta.aggregateId': { $exists: isAggregate } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
 				{ 'meta.height': { $gt: height } }
@@ -619,8 +621,9 @@ class CatapultDb {
 	// Internal method to get transactions filtered by type up to (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsByTypeFrom(collectionName, height, index, type, count) {
+		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
+			{ 'meta.aggregateId': { $exists: isAggregate } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
@@ -635,8 +638,9 @@ class CatapultDb {
 	// Internal method to get transactions filtered by type since (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsByTypeSince(collectionName, height, index, type, count) {
+		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: false } },
+			{ 'meta.aggregateId': { $exists: isAggregate } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
@@ -775,7 +779,7 @@ class CatapultDb {
 			$reduce: {
 				input: "$account.activityBuckets",
 				initialValue: { $toLong: 0 },
-				in: { $add : ["$$value", "$$this.totalFeesPaid"] }
+				in: { $add: ["$$value", "$$this.totalFeesPaid"] }
  			}
 		};
 	}

@@ -31,6 +31,12 @@ const createActiveConditions = () => {
 	return conditions;
 };
 
+// Network currency namespace ID.
+const CURRENCY_ID = uint64.fromHex('85bbea6cc462b244');
+
+// Network harvest namespace ID.
+const HARVEST_ID = uint64.fromHex('941299b2b7e1291c');
+
 class NamespaceDb {
 	/**
 	 * Creates NamespaceDb around CatapultDb.
@@ -73,15 +79,13 @@ class NamespaceDb {
 
 	// Internal method: retrieve network currency mosaic.
 	networkCurrencyMosaic() {
-		const currencyId = uint64.fromHex('85bbea6cc462b244');
-		return this.rawNamespaceById('namespaces', currencyId)
+		return this.rawNamespaceById('namespaces', CURRENCY_ID)
 			.then(namespace => namespace.namespace.alias.mosaicId);
 	}
 
 	// Internal method: retrieve network harvest mosaic.
 	networkHarvestMosaic() {
-		const harvestId = uint64.fromHex('941299b2b7e1291c');
-		return this.rawNamespaceById('namespaces', harvestId)
+		return this.rawNamespaceById('namespaces', HARVEST_ID)
 			.then(namespace => namespace.namespace.alias.mosaicId);
 	}
 
@@ -401,6 +405,174 @@ class NamespaceDb {
 
 	accountsByHarvestBalanceSincePublicKey(...args) {
 		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceSinceAccount', 'rawAccountWithHarvestBalanceByPublicKey', ...args);
+	}
+
+	// endregion
+
+	// region cursor transaction by type with filter helpers
+
+	// Re-export ID methods here for arrayById.
+	rawTransactionByHash(...args) {
+		return this.catapultDb.rawTransactionByHash(...args);
+	}
+
+	rawTransactionById(...args) {
+		return this.catapultDb.rawTransactionById(...args);
+	}
+
+	// region cursor transaction by type with filter retrieval
+
+	// Internal method to simplify requesting transactions by type with filter.
+	// The initialMatch should contain all the logic to query a transaction
+	// by transaction type before or after a given transaction.
+	transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count) {
+		const aggregation = [
+			{ $match: initialMatch }
+		];
+		const projection = { 'meta.addresses': 0 };
+		const sorting = { 'meta.height': -1, 'meta.index': -1 };
+
+		if (type === catapult.model.EntityType.transfer) {
+			if (filter === 'mosaic') {
+				// transfer/mosaic
+				const networkIds = [CURRENCY_ID, HARVEST_ID].map(convertToLong);
+				aggregation.push(
+					// Dynamically add field for if the type has mosaics mosaics.
+					{ $addFields: {
+						'meta.hasMosaics': {
+							$reduce: {
+								input: "$transaction.mosaics",
+								initialValue: false,
+								in: { $or: ["$$value", { $not: { $in: ["$$this.id", networkIds] } } ] }
+							}
+						}
+					} },
+					// Add secondary match condition for those with mosaics.
+					{ $match: { 'meta.hasMosaics': { $eq: true } } }
+				);
+				projection['meta.hasMosaics'] = 0;
+			} else if (filter === 'multisig') {
+				// transfer/multisig
+				aggregation.push(
+					// Lookup stage to fetch the account by the address provided.
+					// We can lookup over an array for localField as of MongoDB 3.4,
+					// and then match to a scalar foreignField, returning
+					// an array of matched values.
+					// TODO(ahuszagh)
+					//	WARNING: accountAddress is not indexed: this must be fixed in production.
+					{ $lookup: {
+						from: 'multisigs',
+						localField: 'meta.addresses',
+		        foreignField: "multisig.accountAddress",
+			      as: 'meta.linkedMultisigAccounts'
+					} },
+					// Add fields locally, which will determine if we have multisig accounts.
+					{ $addFields: {
+						'meta.multisigAccountCount': { $size: '$meta.linkedMultisigAccounts' }
+					} },
+					// Add secondary match condition for those with multisig accounts.
+					{ $match: { 'meta.multisigAccountCount': { $gt: 0 } } }
+				);
+				projection['meta.linkedMultisigAccounts'] = 0;
+				projection['meta.multisigAccountCount'] = 0;
+			} else {
+				// Unknown filter parameter.
+				throw new Error('unknown filter parameter.');
+			}
+		} else {
+			// Unknown type parameter.
+			throw new Error('unknown type parameter.');
+		}
+
+		return this.catapultDb.database.collection(collectionName)
+			.aggregate(aggregation, { promoteLongs: false })
+			.sort(sorting)
+			.project(projection)
+			.limit(count)
+			.toArray()
+			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
+	}
+
+	// Internal method to get transactions filtered by type and a subfilter up to
+	// (non-inclusive) the block height and transaction index, returning at max
+	// `numTransactions` items.
+	transactionsByTypeWithFilterFrom(collectionName, height, index, type, filter, count) {
+		const isAggregate = collectionName === 'partialTransactions';
+		const initialMatch = { $and: [
+			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
+				{ 'meta.height': { $lt: height } }
+			]},
+		]};
+
+		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count);
+	}
+
+	// Internal method to get transactions filtered by type and a subfilter since
+	// (non-inclusive) the block height and transaction index, returning at max
+	// `numTransactions` items.
+	transactionsByTypeWithFilterSince(collectionName, height, index, type, filter, count) {
+		const isAggregate = collectionName === 'partialTransactions';
+		const initialMatch = { $and: [
+			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'transaction.type': { $eq: type } },
+			{ $or: [
+				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
+				{ 'meta.height': { $gt: height } }
+			]},
+		]};
+
+		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count);
+	}
+
+	transactionsByTypeWithFilterFromEarliest(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	transactionsByTypeWithFilterSinceEarliest(...args) {
+		const method = 'transactionsByTypeWithFilterSince';
+		const genArgs = () => [this.catapultDb.minLong(), -1];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeWithFilterFromLatest(...args) {
+		const method = 'transactionsByTypeWithFilterFrom';
+		const genArgs = () => [this.catapultDb.maxLong(), 0];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeWithFilterSinceLatest(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	transactionsByTypeWithFilterFromTransaction(...args) {
+		const method = 'transactionsByTypeWithFilterFrom';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeWithFilterSinceTransaction(...args) {
+		const method = 'transactionsByTypeWithFilterSince';
+		const genArgs = (info) => [info.meta.height, info.meta.index];
+		return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	transactionsByTypeWithFilterFromHash(...args) {
+		return this.catapultDb.arrayFromId(this, 'transactionsByTypeWithFilterFromTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsByTypeWithFilterSinceHash(...args) {
+		return this.catapultDb.arrayFromId(this, 'transactionsByTypeWithFilterSinceTransaction', 'rawTransactionByHash', ...args);
+	}
+
+	transactionsByTypeWithFilterFromId(...args) {
+		return this.catapultDb.arrayFromId(this, 'transactionsByTypeWithFilterFromTransaction', 'rawTransactionById', ...args);
+	}
+
+	transactionsByTypeWithFilterSinceId(...args) {
+		return this.catapultDb.arrayFromId(this, 'transactionsByTypeWithFilterSinceTransaction', 'rawTransactionById', ...args);
 	}
 
 	// endregion

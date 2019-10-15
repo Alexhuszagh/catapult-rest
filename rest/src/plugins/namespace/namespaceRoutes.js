@@ -119,6 +119,52 @@ const getAccounts = (req, res, next, db, collectionName, countRange, redirectUrl
   routeUtils.queryAndSendDurationCollection(res, next, account, db, dbMethod, dbArgs, transformer, resultType);
 }
 
+// Implied method to get transactions filtered by type from or since identifier.
+//  req - Request data.
+//  res - Response data.
+//  next - Control flow callback.
+//  db - Database utility.
+//  collectionName - Name of the collection to query.
+//  countRange - Range of valid query counts.
+//  redirectUrl - Callback to get redirect URL.
+//  duration - 'From' or 'Since'.
+//  transformer - Callback to transform each element.
+//  resultType - Data result type (for formatting).
+const getTransactionsByTypeWithFilter = (req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType) => {
+  const transaction = req.params.transaction;
+  const limit = routeUtils.parseRangeArgument(req.params, 'limit', countRange, 'uint');
+  const type = routeUtils.parseArgument(req.params, 'type', 'transactionType');
+  // req.params.type has already been white-listed, so this is safe.
+  const filter = routeUtils.parseArgument(req.params, 'filter', req.params.type + 'FilterType');
+
+  if (!limit) {
+      return res.redirect(redirectUrl(transaction, req.params.type, countRange.preset), next);
+  }
+
+  let dbMethod;
+  let dbArgs;
+  if (routeUtils.validateValue(transaction, 'earliest')) {
+      dbMethod = 'transactionsByTypeWithFilter' + duration + 'Earliest';
+      dbArgs = [collectionName, type, filter, limit];
+  } else if (routeUtils.validateValue(transaction, 'latest')) {
+      dbMethod = 'transactionsByTypeWithFilter' + duration + 'Latest';
+      dbArgs = [collectionName, type, filter, limit];
+  } else if (routeUtils.validateValue(transaction, 'objectId')) {
+      const id = routeUtils.parseValue(transaction, 'objectId');
+      dbMethod = 'transactionsByTypeWithFilter' + duration + 'Id';
+      dbArgs = [collectionName, id, type, filter, limit];
+  } else if (routeUtils.validateValue(transaction, 'hash256')) {
+      const hash = routeUtils.parseValue(transaction, 'hash256');
+      dbMethod = 'transactionsByTypeWithFilter' + duration + 'Hash';
+      dbArgs = [collectionName, hash, type, filter, limit];
+  } else {
+    res.send(errors.createInvalidArgumentError('transactionId has an invalid format'));
+    return next();
+  }
+
+  routeUtils.queryAndSendDurationCollection(res, next, transaction, db, dbMethod, dbArgs, transformer, resultType);
+}
+
 module.exports = {
 	register: (server, db, services) => {
     const countRange = services.config.countRange;
@@ -384,6 +430,58 @@ module.exports = {
       const transformer = (info) => { return { address: info.account.address }; };
       const resultType = routeResultTypes.accountAddress;
       return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // CURSORS -- CONFIRMED TRANSACTIONS BY TYPE WITH FILTER
+
+    // Gets transactions filtered by type and a subfilter up to the identifier (non-inclusive).
+    // The identifier may be:
+    //  - latest (returning up-to and including the latest transaction).
+    //  - earliest (returning from the earliest transaction, IE, nothing).
+    //  - A transaction hash.
+    //  - A transaction ID.
+    server.get('/transactions/from/:transaction/type/:type/filter/:filter/limit/:limit', (req, res, next) => {
+      const collectionName = 'transactions';
+      const redirectUrl = (transaction, type, filter, limit) => `/transactions/from/${transaction}/type/${type}/filter/${filter}/limit/${limit}`;
+      const duration = 'From';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.transaction;
+      return getTransactionsByTypeWithFilter(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+    });
+
+    // Gets transactions filtered by type and a subfilter since the identifier (non-inclusive).
+    // The identifier may be:
+    //  - latest (returning since the latest transaction, IE, nothing).
+    //  - earliest (returning since the earliest transaction).
+    //  - A transaction hash.
+    //  - A transaction ID.
+    server.get('/transactions/since/:transaction/type/:type/filter/:filter/limit/:limit', (req, res, next) => {
+      const collectionName = 'transactions';
+      const redirectUrl = (transaction, type, filter, limit) => `/transactions/since/${transaction}/type/${type}/filter/${filter}/limit/${limit}`;
+      const duration = 'Since';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.transaction;
+      return getTransactionsByTypeWithFilter(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/transactions/from/:transaction/type/:type/filter/:filter/limit/:limit/hash', (req, res, next) => {
+      const collectionName = 'transactions';
+      const redirectUrl = (transaction, type, limit) => `/transactions/from/${transaction}/type/${type}/filter/${filter}/limit/${limit}/hash`;
+      const duration = 'From';
+      const transformer = (info) => { return { hash: info.meta.hash }; };
+      const resultType = routeResultTypes.transactionHash;
+      return getTransactionsByTypeWithFilter(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/transactions/since/:transaction/type/:type/filter/:filter/limit/:limit/hash', (req, res, next) => {
+      const collectionName = 'transactions';
+      const redirectUrl = (transaction, type, limit) => `/transactions/since/${transaction}/type/${type}/filter/${filter}/limit/${limit}/hash`;
+      const duration = 'Since';
+      const transformer = (info) => { return { hash: info.meta.hash }; };
+      const resultType = routeResultTypes.transactionHash;
+      return getTransactionsByTypeWithFilter(req, res, next, db, collectionName, countRange, redirectUrl, duration, transformer, resultType);
     });
 	}
 };

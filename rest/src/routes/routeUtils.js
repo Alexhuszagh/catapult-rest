@@ -53,7 +53,8 @@ const namedValidatorMap = {
 	earliest: str => str === 'earliest' || str === 'min',
 	latest: str => str === 'latest' || str === 'max',
 	least: str => str === 'least' || str === 'min',
-	most: str => str === 'most' || str === 'max'
+	most: str => str === 'most' || str === 'max',
+	transferFilterType: str => str === 'mosaic' || str === 'multisig'
 };
 
 const namedParserMap = {
@@ -134,6 +135,11 @@ const namedParserMap = {
 			throw Error('unrecognized transaction type');
 
 		return type;
+	},
+	transferFilterType: str => {
+		if (namedValidatorMap.transferFilterType(str))
+			return str;
+		throw Error(`invalid transfer filter type ${str}`)
 	}
 };
 
