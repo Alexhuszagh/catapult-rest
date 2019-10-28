@@ -490,16 +490,16 @@ class NamespaceDb {
 			.project(projection)
 			.limit(count)
 			.toArray()
-			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
+			.then(this.catapultDb.sanitizer.copyAndDeleteIds)
+			.then(transactions => this.catapultDb.addAggregateTransactions(collectionName, transactions));
 	}
 
 	// Internal method to get transactions filtered by type and a subfilter up to
 	// (non-inclusive) the block height and transaction index, returning at max
 	// `numTransactions` items.
 	transactionsByTypeWithFilterFrom(collectionName, height, index, type, filter, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const initialMatch = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
@@ -514,9 +514,8 @@ class NamespaceDb {
 	// (non-inclusive) the block height and transaction index, returning at max
 	// `numTransactions` items.
 	transactionsByTypeWithFilterSince(collectionName, height, index, type, filter, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const initialMatch = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },

@@ -31,6 +31,28 @@ const { Long, ObjectId } = MongoDb;
 const isAggregateType = document => EntityType.aggregateComplete === document.transaction.type
 	|| EntityType.aggregateBonded === document.transaction.type;
 
+const extractAggregateIds = transactions => {
+	const aggregateIds = [];
+	const transactionMap = {};
+	transactions
+		.filter(isAggregateType)
+		.forEach(info => {
+			const aggregateId = info.meta.id;
+			aggregateIds.push(aggregateId);
+			transactionMap[aggregateId.toString()] = info.transaction;
+		});
+
+	return { aggregateIds, transactionMap };
+}
+
+const addAggregateTransaction = (transactionMap, aggregateTransaction) => {
+	const transaction = transactionMap[aggregateTransaction.meta.aggregateId];
+	if (!transaction.transactions)
+		transaction.transactions = [];
+
+	transaction.transactions.push(aggregateTransaction);
+}
+
 const createAccountTransactionsAllConditions = (publicKey, networkId) => {
 	const decodedAddress = address.publicKeyToAddress(publicKey, networkId);
 	const bufferPublicKey = Buffer.from(publicKey);
@@ -521,6 +543,29 @@ class CatapultDb {
 
   // region cursor transaction retrieval
 
+  // Internal method to query dependent aggregate transactions.
+  queryAggregateTransactions(collectionName, aggregateIds)  {
+  	if (0 === aggregateIds.length)
+			return Promise.resolve([]);
+
+		const aggregateCondition = { 'meta.aggregateId': { $in: aggregateIds } };
+		return this.database.collection(collectionName)
+			.find(aggregateCondition)
+			.toArray()
+			.then(this.sanitizer.copyAndDeleteIds);
+  }
+
+  // Internal method to add aggregate transactions.
+  addAggregateTransactions(collectionName, transactions) {
+  	// Add dependent aggregate transactions.
+		const { aggregateIds, transactionMap } = extractAggregateIds(transactions);
+		return this.queryAggregateTransactions(collectionName, aggregateIds)
+			.then(documents => {
+				documents.forEach(aggregate => addAggregateTransaction(transactionMap, aggregate));
+				return transactions;
+			});
+  }
+
 	// Internal method to find sorted transactions from query.
 	sortedTransactions(collectionName, condition, count) {
 		const projection = { 'meta.addresses': 0 };
@@ -531,15 +576,15 @@ class CatapultDb {
 			.project(projection)
 			.limit(count)
 			.toArray()
-			.then(this.sanitizer.copyAndDeleteIds);
+			.then(this.sanitizer.copyAndDeleteIds)
+			.then(transactions => this.addAggregateTransactions(collectionName, transactions));
 	}
 
 	// Internal method to get transactions up to (non-inclusive) the block height
 	// and transaction index, returning at max `count` items.
 	transactionsFrom(collectionName, height, index, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
 				{ 'meta.height': { $lt: height } }
@@ -553,9 +598,8 @@ class CatapultDb {
 	// Internal method to get transactions since (non-inclusive) the block height
 	// and transaction index, returning at max `count` items.
 	transactionsSince(collectionName, height, index, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
 				{ 'meta.height': { $gt: height } }
@@ -621,9 +665,8 @@ class CatapultDb {
 	// Internal method to get transactions filtered by type up to (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsByTypeFrom(collectionName, height, index, type, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $lt: index } },
@@ -638,9 +681,8 @@ class CatapultDb {
 	// Internal method to get transactions filtered by type since (non-inclusive) the block height
 	// and transaction index, returning at max `numTransactions` items.
 	transactionsByTypeSince(collectionName, height, index, type, count) {
-		const isAggregate = collectionName === 'partialTransactions';
 		const condition = { $and: [
-			{ 'meta.aggregateId': { $exists: isAggregate } },
+			{ 'meta.aggregateId': { $exists: false } },
 			{ 'transaction.type': { $eq: type } },
 			{ $or: [
 				{ 'meta.height': { $eq: height }, 'meta.index': { $gt: index } },
