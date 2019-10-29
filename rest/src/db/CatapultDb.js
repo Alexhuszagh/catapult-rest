@@ -361,6 +361,9 @@ class CatapultDb {
   // region cursor block retrieval
 
 	// Internal method to find sorted blocks from query.
+	// Note:
+	//	No need for an initial sort, since the start and end height
+	//	are limited in the condition.
 	sortedBlocks(collectionName, condition, count) {
 		const projection = { 'meta.transactionMerkleTree': 0, 'meta.statementMerkleTree': 0 };
 		const sorting = { 'block.height': -1 };
@@ -567,14 +570,20 @@ class CatapultDb {
   }
 
 	// Internal method to find sorted transactions from query.
-	sortedTransactions(collectionName, condition, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedTransactions(collectionName, condition, sortAscending, count) {
 		const projection = { 'meta.addresses': 0 };
-		const sorting = { 'meta.height': -1, 'meta.index': -1 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'meta.height': order, 'meta.index': order };
+		const finalSort = { 'meta.height': -1, 'meta.index': -1 };
 		return this.database.collection(collectionName)
 			.find(condition)
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.sanitizer.copyAndDeleteIds)
 			.then(transactions => this.addAggregateTransactions(collectionName, transactions));
@@ -591,7 +600,7 @@ class CatapultDb {
 			]},
 		]};
 
-		return this.sortedTransactions(collectionName, condition, count)
+		return this.sortedTransactions(collectionName, condition, false, count)
 			.then(transactions => Promise.resolve(transactions));
 	}
 
@@ -606,7 +615,7 @@ class CatapultDb {
 			]},
 		]};
 
-		return this.sortedTransactions(collectionName, condition, count)
+		return this.sortedTransactions(collectionName, condition, true, count)
 			.then(transactions => Promise.resolve(transactions));
 	}
 
@@ -674,7 +683,7 @@ class CatapultDb {
 			]},
 		]};
 
-		return this.sortedTransactions(collectionName, condition, count)
+		return this.sortedTransactions(collectionName, condition, false, count)
 			.then(transactions => Promise.resolve(transactions));
 	}
 
@@ -690,7 +699,7 @@ class CatapultDb {
 			]},
 		]};
 
-		return this.sortedTransactions(collectionName, condition, count)
+		return this.sortedTransactions(collectionName, condition, true, count)
 			.then(transactions => Promise.resolve(transactions));
 	}
 
@@ -866,7 +875,10 @@ class CatapultDb {
 	}
 
 	// Internal method to find sorted accounts by importance from query.
-	sortedAccountsByImportance(collectionName, match, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedAccountsByImportance(collectionName, match, sortAscending, count) {
 		const aggregation = [
 			{ $addFields: {
 				'account.importance': this.addFieldImportance(),
@@ -876,14 +888,17 @@ class CatapultDb {
 		];
 		// Need secondary public key height and ID height to sort by when the
 		// account's public key was known to network.
-		const sorting = { 'account.importance': -1, 'account.publicKeyHeight': -1, _id: -1 };
 		const projection = { 'account.importances': 0 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'account.importance': order, 'account.publicKeyHeight': order, _id: order };
+		const finalSort = { 'account.importance': -1, 'account.publicKeyHeight': -1, _id: -1 };
 
 		return this.database.collection(collectionName)
 			.aggregate(aggregation, { promoteLongs: false })
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.sanitizer.deleteIds);
 	}
@@ -910,7 +925,7 @@ class CatapultDb {
 	// and ID, returning at max `numAccounts` items.
 	accountsByImportanceFrom(collectionName, importance, height, id, numAccounts) {
 		const match = this.accountMatchCondition('importance', '$lt', importance, height, id);
-		return this.sortedAccountsByImportance(collectionName, match, numAccounts)
+		return this.sortedAccountsByImportance(collectionName, match, false, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
@@ -918,7 +933,7 @@ class CatapultDb {
 	// and ID, returning at max `numAccounts` items.
 	accountsByImportanceSince(collectionName, importance, height, id, numAccounts) {
 		const match = this.accountMatchCondition('importance', '$gt', importance, height, id);
-		return this.sortedAccountsByImportance(collectionName, match, numAccounts)
+		return this.sortedAccountsByImportance(collectionName, match, true, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
@@ -990,7 +1005,10 @@ class CatapultDb {
 	}
 
 	// Internal method to find sorted accounts by harvested blocks from query.
-	sortedAccountsByHarvestedBlocks(collectionName, match, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedAccountsByHarvestedBlocks(collectionName, match, sortAscending, count) {
 		const aggregation = [
 			{ $addFields: {
 				'account.importance': this.addFieldImportance(),
@@ -1001,14 +1019,17 @@ class CatapultDb {
 		];
 		// Need secondary public key height and ID height to sort by when the
 		// account's public key was known to network.
-		const sorting = { 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
 		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'account.harvestedBlocks': order , 'account.publicKeyHeight': order , _id: order  };
+		const finalSort = { 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
 
 		return this.database.collection(collectionName)
 			.aggregate(aggregation, { promoteLongs: false })
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.sanitizer.deleteIds);
 	}
@@ -1016,14 +1037,14 @@ class CatapultDb {
 	// Internal method: get accounts up to (non-inclusive), returning at max `numAccounts` items.
 	accountsByHarvestedBlocksFrom(collectionName, harvestedBlocks, height, id, numAccounts) {
 		const match = this.accountMatchCondition('harvestedBlocks', '$lt', harvestedBlocks, height, id);
-		return this.sortedAccountsByHarvestedBlocks(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestedBlocks(collectionName, match, false, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
 	// Internal method: get accounts since (non-inclusive), returning at max `numAccounts` items.
 	accountsByHarvestedBlocksSince(collectionName, harvestedBlocks, height, id, numAccounts) {
 		const match = this.accountMatchCondition('harvestedBlocks', '$gt', harvestedBlocks, height, id);
-		return this.sortedAccountsByHarvestedBlocks(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestedBlocks(collectionName, match, true, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
@@ -1096,7 +1117,10 @@ class CatapultDb {
 	}
 
 	// Internal method to find sorted accounts by harvested fees from query.
-	sortedAccountsByHarvestedFees(collectionName, match, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedAccountsByHarvestedFees(collectionName, match, sortAscending, count) {
 		const aggregation = [
 			{ $addFields: {
 				'account.importance': this.addFieldImportance(),
@@ -1110,14 +1134,17 @@ class CatapultDb {
 		// should score higher.
 		// Need secondary public key height and ID height to sort by when the
 		// account's public key was known to network.
-		const sorting = { 'account.harvestedFees': -1, 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
 		const projection = { 'account.importances': 0, 'account.harvestedBlocks': 0, 'account.harvestedFees': 0 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'account.harvestedFees': order, 'account.harvestedBlocks': order, 'account.publicKeyHeight': order, _id: order };
+		const finalSort = { 'account.harvestedFees': -1, 'account.harvestedBlocks': -1, 'account.publicKeyHeight': -1, _id: -1 };
 
 		return this.database.collection(collectionName)
 			.aggregate(aggregation, { promoteLongs: false })
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.sanitizer.deleteIds);
 	}
@@ -1125,14 +1152,14 @@ class CatapultDb {
 	// Internal method: get accounts up to (non-inclusive), returning at max `numAccounts` items.
 	accountsByHarvestedFeesFrom(collectionName, harvestedFees, height, id, numAccounts) {
 		const match = this.accountMatchCondition('harvestedFees', '$lt', harvestedFees, height, id);
-		return this.sortedAccountsByHarvestedFees(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestedFees(collectionName, match, false, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
 	// Internal method: get accounts since (non-inclusive), returning at max `numAccounts` items.
 	accountsByHarvestedFeesSince(collectionName, harvestedFees, height, id, numAccounts) {
 		const match = this.accountMatchCondition('harvestedFees', '$gt', harvestedFees, height, id);
-		return this.sortedAccountsByHarvestedFees(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestedFees(collectionName, match, true, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 

@@ -48,16 +48,22 @@ class MosaicDb {
   // region cursor mosaic retrieval
 
 	// Internal method to find sorted mosaics from query.
-	sortedMosaics(collectionName, condition, count) {
+  // Note:
+  //  Use an initial sort to ensure we limit in the desired order,
+  //  then use a final sort to ensure everything is in descending order.
+	sortedMosaics(collectionName, condition, sortAscending, count) {
 		// Sort by descending startHeight, then by descending ID.
 		// Don't sort solely on ID, since it will break if 32-bit time wraps.
 		// TODO(ahuszagh)
 		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const sorting = { 'mosaic.startHeight': -1, _id: -1 };
+    const order = sortAscending ? 1 : -1;
+    const initialSort = { 'mosaic.startHeight': order, _id: order };
+		const finalSort = { 'mosaic.startHeight': -1, _id: -1 };
     return this.catapultDb.database.collection(collectionName)
       .find(condition)
-      .sort(sorting)
+      .sort(initialSort)
       .limit(count)
+      .sort(finalSort)
       .toArray()
 			.then(this.catapultDb.sanitizer.deleteIds);
 	}
@@ -72,7 +78,7 @@ class MosaicDb {
 			{ 'mosaic.startHeight': { $lt: height } }
 		]};
 
-		return this.sortedMosaics(collectionName, condition, count)
+		return this.sortedMosaics(collectionName, condition, false, count)
 			.then(mosaics => Promise.resolve(mosaics));
 	}
 
@@ -86,7 +92,7 @@ class MosaicDb {
 			{ 'mosaic.startHeight': { $gt: height } }
 		]};
 
-		return this.sortedMosaics(collectionName, condition, count)
+		return this.sortedMosaics(collectionName, condition, true, count)
 			.then(mosaics => Promise.resolve(mosaics));
 	}
 

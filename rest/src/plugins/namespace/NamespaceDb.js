@@ -94,16 +94,22 @@ class NamespaceDb {
   // region cursor namespace retrieval
 
 	// Internal method to find sorted namespaces from query.
-	sortedNamespaces(collectionName, condition, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedNamespaces(collectionName, condition, sortAscending, count) {
 		// Sort by descending startHeight, then by descending ID.
 		// Don't sort solely on ID, since it will break if 32-bit time wraps.
 		// TODO(ahuszagh)
 		//	WARNING: startHeight is not indexed: this must be fixed in production.
-		const sorting = { 'namespace.startHeight': -1, _id: -1 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'namespace.startHeight': order, _id: order };
+		const finalSort = { 'namespace.startHeight': -1, _id: -1 };
 		return this.catapultDb.database.collection(collectionName)
       .find(condition)
-      .sort(sorting)
+      .sort(initialSort)
       .limit(count)
+      .sort(finalSort)
       .toArray()
 			.then(this.catapultDb.sanitizer.copyAndDeleteIds);
 	}
@@ -118,7 +124,7 @@ class NamespaceDb {
 			{ 'namespace.startHeight': { $lt: height } }
 		]};
 
-		return this.sortedNamespaces(collectionName, condition, count)
+		return this.sortedNamespaces(collectionName, condition, false, count)
 			.then(namespaces => Promise.resolve(namespaces));
 	}
 
@@ -132,7 +138,7 @@ class NamespaceDb {
 			{ 'namespace.startHeight': { $gt: height } }
 		]};
 
-		return this.sortedNamespaces(collectionName, condition, count)
+		return this.sortedNamespaces(collectionName, condition, true, count)
 			.then(namespaces => Promise.resolve(namespaces));
 	}
 
@@ -210,7 +216,10 @@ class NamespaceDb {
 	}
 
 	// Internal method to find sort accounts by balance in a mosaic ID from query.
-	sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	sortedAccountsByMosaicBalance(collectionName, mosaicId, match, sortAscending, count) {
 		const aggregation = [
 			{ $addFields: {
 				'account.importance': this.catapultDb.addFieldImportance(),
@@ -221,14 +230,17 @@ class NamespaceDb {
 		];
 		// Need secondary public key height and ID height to sort by when the
 		// account's public key was known to network.
-		const sorting = { 'account.balance': -1, 'account.publicKeyHeight': -1, _id: -1 };
 		const projection = { 'account.importances': 0, 'account.balance': 0 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'account.balance': order, 'account.publicKeyHeight': order, _id: order };
+		const finalSort = { 'account.balance': -1, 'account.publicKeyHeight': -1, _id: -1 };
 
 		return this.catapultDb.database.collection(collectionName)
 			.aggregate(aggregation, { promoteLongs: false })
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.catapultDb.sanitizer.deleteIds);
 	}
@@ -254,21 +266,21 @@ class NamespaceDb {
 		return this.rawAccountWithCurrencyBalanceByAddress(collectionName, address);
 	}
 
-	sortedAccountsByCurrencyBalance(collectionName, match, count) {
+	sortedAccountsByCurrencyBalance(collectionName, match, sortAscending, count) {
 		return this.networkCurrencyMosaic().then(mosaicId => {
-			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count);
+			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, sortAscending, count);
 		});
 	}
 
 	accountsByCurrencyBalanceFrom(collectionName, balance, height, id, numAccounts) {
 		const match = this.catapultDb.accountMatchCondition('balance', '$lt', balance, height, id);
-		return this.sortedAccountsByCurrencyBalance(collectionName, match, numAccounts)
+		return this.sortedAccountsByCurrencyBalance(collectionName, match, false, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
 	accountsByCurrencyBalanceSince(collectionName, balance, height, id, numAccounts) {
 		const match = this.catapultDb.accountMatchCondition('balance', '$gt', balance, height, id);
-		return this.sortedAccountsByCurrencyBalance(collectionName, match, numAccounts)
+		return this.sortedAccountsByCurrencyBalance(collectionName, match, true, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
@@ -341,21 +353,21 @@ class NamespaceDb {
 		return this.rawAccountWithHarvestBalanceByAddress(collectionName, address);
 	}
 
-	sortedAccountsByHarvestBalance(collectionName, match, count) {
+	sortedAccountsByHarvestBalance(collectionName, match, sortAscending, count) {
 		return this.networkHarvestMosaic().then(mosaicId => {
-			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, count);
+			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, sortAscending, count);
 		});
 	}
 
 	accountsByHarvestBalanceFrom(collectionName, balance, height, id, numAccounts) {
 		const match = this.catapultDb.accountMatchCondition('balance', '$lt', balance, height, id);
-		return this.sortedAccountsByHarvestBalance(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestBalance(collectionName, match, false, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
 	accountsByHarvestBalanceSince(collectionName, balance, height, id, numAccounts) {
 		const match = this.catapultDb.accountMatchCondition('balance', '$gt', balance, height, id);
-		return this.sortedAccountsByHarvestBalance(collectionName, match, numAccounts)
+		return this.sortedAccountsByHarvestBalance(collectionName, match, true, numAccounts)
 			.then(accounts => Promise.resolve(accounts));
 	}
 
@@ -425,12 +437,17 @@ class NamespaceDb {
 	// Internal method to simplify requesting transactions by type with filter.
 	// The initialMatch should contain all the logic to query a transaction
 	// by transaction type before or after a given transaction.
-	transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count) {
+	// Note:
+	//	Use an initial sort to ensure we limit in the desired order,
+	//	then use a final sort to ensure everything is in descending order.
+	transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, sortAscending, count) {
 		const aggregation = [
 			{ $match: initialMatch }
 		];
 		const projection = { 'meta.addresses': 0 };
-		const sorting = { 'meta.height': -1, 'meta.index': -1 };
+		const order = sortAscending ? 1 : -1;
+		const initialSort = { 'meta.height': order, 'meta.index': order };
+		const finalSort = { 'meta.height': -1, 'meta.index': -1 };
 
 		if (type === catapult.model.EntityType.transfer) {
 			if (filter === 'mosaic') {
@@ -486,9 +503,10 @@ class NamespaceDb {
 
 		return this.catapultDb.database.collection(collectionName)
 			.aggregate(aggregation, { promoteLongs: false })
-			.sort(sorting)
-			.project(projection)
+			.sort(initialSort)
 			.limit(count)
+			.sort(finalSort)
+			.project(projection)
 			.toArray()
 			.then(this.catapultDb.sanitizer.copyAndDeleteIds)
 			.then(transactions => this.catapultDb.addAggregateTransactions(collectionName, transactions));
@@ -507,7 +525,7 @@ class NamespaceDb {
 			]},
 		]};
 
-		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count);
+		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, false, count);
 	}
 
 	// Internal method to get transactions filtered by type and a subfilter since
@@ -523,7 +541,7 @@ class NamespaceDb {
 			]},
 		]};
 
-		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, count);
+		return this.transactionsByTypeWithFilter(collectionName, initialMatch, type, filter, true, count);
 	}
 
 	transactionsByTypeWithFilterFromEarliest(...args) {
