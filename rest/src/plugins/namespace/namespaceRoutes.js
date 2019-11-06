@@ -432,6 +432,62 @@ module.exports = {
       return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
     });
 
+    // CURSORS - ACCOUNTS BY XEM BALANCE
+
+    // Gets accounts by xem balance up to the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning up-to and including the account with the most xem balance).
+    //  - least (returning from the account with the least xem balance, IE, nothing).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/xem/from/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/xem/from/${account}/limit/${limit}`;
+      const sortType = 'ByXemBalance';
+      const duration = 'From';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // Gets accounts by xem balance since the identifier (non-inclusive).
+    // The identifier may be:
+    //  - most (returning since the account with the most xem balance, IE, nothing).
+    //  - least (returning since the account with the least xem balance).
+    //  - An account address (base32 or hex-encoded).
+    //  - An account public key (hex-encoded).
+    server.get('/accounts/balance/xem/since/:account/limit/:limit', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/xem/since/${account}/limit/${limit}`;
+      const sortType = 'ByXemBalance';
+      const duration = 'Since';
+      const transformer = (info) => info;
+      const resultType = routeResultTypes.account;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/xem/from/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/xem/from/${account}/limit/${limit}/address`;
+      const sortType = 'ByXemBalance';
+      const duration = 'From';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
+    // TODO(ahuszagh) Debug method. Remove later.
+    server.get('/accounts/balance/xem/since/:account/limit/:limit/address', (req, res, next) => {
+      const collectionName = 'accounts';
+      const redirectUrl = (account, limit) => `/accounts/balance/xem/since/${account}/limit/${limit}/address`;
+      const sortType = 'ByXemBalance';
+      const duration = 'Since';
+      const transformer = (info) => { return { address: info.account.address }; };
+      const resultType = routeResultTypes.accountAddress;
+      return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
+    });
+
     // CURSORS -- CONFIRMED TRANSACTIONS BY TYPE WITH FILTER
 
     // Gets transactions filtered by type and a subfilter up to the identifier (non-inclusive).

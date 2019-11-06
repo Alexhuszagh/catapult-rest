@@ -31,11 +31,14 @@ const createActiveConditions = () => {
 	return conditions;
 };
 
-// Network currency namespace ID.
+// Network currency namespace ID (internal only).
 const CURRENCY_ID = uint64.fromHex('85bbea6cc462b244');
 
-// Network harvest namespace ID.
+// Network harvest namespace ID (internal only).
 const HARVEST_ID = uint64.fromHex('941299b2b7e1291c');
+
+// XEM namespace ID (public net only).
+const XEM_ID = uint64.fromHex('d525ad41d95fcf29');
 
 class NamespaceDb {
 	/**
@@ -77,15 +80,21 @@ class NamespaceDb {
 
   // region well-known mosaic retrieval
 
-	// Internal method: retrieve network currency mosaic.
+	// Internal method: retrieve network currency mosaic (private nodes only).
 	networkCurrencyMosaic() {
 		return this.rawNamespaceById('namespaces', CURRENCY_ID)
 			.then(namespace => namespace.namespace.alias.mosaicId);
 	}
 
-	// Internal method: retrieve network harvest mosaic.
+	// Internal method: retrieve network harvest mosaic (private nodes only).
 	networkHarvestMosaic() {
 		return this.rawNamespaceById('namespaces', HARVEST_ID)
+			.then(namespace => namespace.namespace.alias.mosaicId);
+	}
+
+	// Internal method: retrieve XEM mosaic (public nodes only).
+	networkXemMosaic() {
+		return this.rawNamespaceById('namespaces', XEM_ID)
 			.then(namespace => namespace.namespace.alias.mosaicId);
 	}
 
@@ -250,7 +259,7 @@ class NamespaceDb {
 	// region cursor account by currency mosaic retrieval
 
 	rawAccountWithCurrencyBalanceByAddress(collectionName, address) {
-		return this.networkHarvestMosaic().then(mosaicId => {
+		return this.networkCurrencyMosaic().then(mosaicId => {
 			const addFields = { $addFields: {
 				'account.importance': this.catapultDb.addFieldImportance(),
 				'account.importanceHeight': this.catapultDb.addFieldImportanceHeight(),
@@ -417,6 +426,93 @@ class NamespaceDb {
 
 	accountsByHarvestBalanceSincePublicKey(...args) {
 		return this.catapultDb.arrayFromId(this, 'accountsByHarvestBalanceSinceAccount', 'rawAccountWithHarvestBalanceByPublicKey', ...args);
+	}
+
+	// endregion
+
+	// region cursor account by xem mosaic retrieval
+
+	rawAccountWithXemBalanceByAddress(collectionName, address) {
+		return this.networkXemMosaic().then(mosaicId => {
+			const addFields = { $addFields: {
+				'account.importance': this.catapultDb.addFieldImportance(),
+				'account.importanceHeight': this.catapultDb.addFieldImportanceHeight(),
+				'account.balance': this.addFieldMosaicBalance(mosaicId)
+			} };
+			const projection = { 'account.importances': 0 };
+			return this.catapultDb.rawAccountByAddress(collectionName, address, addFields, projection);
+		});
+	}
+
+	rawAccountWithXemBalanceByPublicKey(collectionName, publicKey) {
+		const address = this.catapultDb.publicKeyToAddress(publicKey);
+		return this.rawAccountWithXemBalanceByAddress(collectionName, address);
+	}
+
+	sortedAccountsByXemBalance(collectionName, match, sortAscending, count) {
+		return this.networkXemMosaic().then(mosaicId => {
+			return this.sortedAccountsByMosaicBalance(collectionName, mosaicId, match, sortAscending, count);
+		});
+	}
+
+	accountsByXemBalanceFrom(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$lt', balance, height, id);
+		return this.sortedAccountsByXemBalance(collectionName, match, false, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByXemBalanceSince(collectionName, balance, height, id, numAccounts) {
+		const match = this.catapultDb.accountMatchCondition('balance', '$gt', balance, height, id);
+		return this.sortedAccountsByXemBalance(collectionName, match, true, numAccounts)
+			.then(accounts => Promise.resolve(accounts));
+	}
+
+	accountsByXemBalanceFromLeast(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByXemBalanceSinceLeast(...args) {
+		const method = 'accountsByXemBalanceSince';
+		const genArgs = () => [this.catapultDb.minLong(), this.catapultDb.minLong(), this.catapultDb.minObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByXemBalanceFromMost(...args) {
+		const method = 'accountsByXemBalanceFrom';
+		const genArgs = () => [this.catapultDb.maxLong(), this.catapultDb.maxLong(), this.catapultDb.maxObjectId()];
+		return this.catapultDb.arrayFromAbsolute(this, method, genArgs, ...args);
+	}
+
+	accountsByXemBalanceSinceMost(...args) {
+		return this.catapultDb.arrayFromEmpty();
+	}
+
+	accountsByXemBalanceFromAccount(...args) {
+		const method = 'accountsByXemBalanceFrom';
+	const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+	return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByXemBalanceSinceAccount(...args) {
+		const method = 'accountsByXemBalanceFrom';
+		const genArgs = (account) => [account.account.balance, account.account.publicKeyHeight, account._id];
+	return this.catapultDb.arrayFromRecord(this, method, genArgs, ...args);
+	}
+
+	accountsByXemBalanceFromAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByXemBalanceFromAccount', 'rawAccountWithXemBalanceByAddress', ...args);
+	}
+
+	accountsByXemBalanceSinceAddress(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByXemBalanceSinceAccount', 'rawAccountWithXemBalanceByAddress', ...args);
+	}
+
+	accountsByXemBalanceFromPublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByXemBalanceFromAccount', 'rawAccountWithXemBalanceByPublicKey', ...args);
+	}
+
+	accountsByXemBalanceSincePublicKey(...args) {
+		return this.catapultDb.arrayFromId(this, 'accountsByXemBalanceSinceAccount', 'rawAccountWithXemBalanceByPublicKey', ...args);
 	}
 
 	// endregion
