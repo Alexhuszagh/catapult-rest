@@ -145,7 +145,7 @@ module.exports = {
 				res.send({ payload: accounts, type: routeResultTypes.account });
 				next();
 			});
-		}
+		});
 		// CURSORS - ACCOUNTS BY IMPORTANCE
 
 		// Gets accounts by importance up to the identifier (non-inclusive).
