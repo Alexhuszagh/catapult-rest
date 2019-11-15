@@ -311,7 +311,6 @@ module.exports = {
 			const transformer = (info) => { return { address: info.account.address }; };
 			const resultType = routeResultTypes.accountAddress;
 			return getAccounts(req, res, next, db, collectionName, countRange, redirectUrl, sortType, duration, transformer, resultType);
->>>>>>> Added basic account methods, DB queries, and simplified the query API.
 		});
 	}
 };
